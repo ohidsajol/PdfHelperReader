@@ -13,5 +13,5 @@ dependencyResolutionManagement {
         maven { setUrl("https://jitpack.io") }
     }
 }
-rootProject.name = "DualPdfReader"
+rootProject.name = "PdfHelperReader"
 include(":app")

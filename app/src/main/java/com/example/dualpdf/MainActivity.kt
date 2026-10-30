@@ -288,7 +288,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         else -> e.message ?: e.javaClass.simpleName
     }
 
-    private val stateFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "vocab_files/.pdfHelperReader_state.json")
+    private val stateFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PdfHelperReader_files/.PdfHelperReader_state.json")
 
     private fun syncToDisk() {
         scope.launch(Dispatchers.IO) {
@@ -754,7 +754,7 @@ fun ReaderScreen(reader: Reader) {
                                 onDone = { generatedTempFile ->
                                     try {
                                         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                        val ocrDir = File(downloadsDir, "vocab_files")
+                                        val ocrDir = File(downloadsDir, "PdfHelperReader_files")
                                         if (!ocrDir.exists()) ocrDir.mkdirs()
                                         
                                         val originalName = reader.book.name?.removeSuffix(".pdf") ?: "book"
@@ -864,7 +864,7 @@ fun ReaderScreen(reader: Reader) {
                                 onDone = { generatedTempFile ->
                                     try {
                                         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                        val vocabDir = File(downloadsDir, "vocab_files")
+                                        val vocabDir = File(downloadsDir, "PdfHelperReader_files")
                                         if (!vocabDir.exists()) {
                                             vocabDir.mkdirs()
                                         }
