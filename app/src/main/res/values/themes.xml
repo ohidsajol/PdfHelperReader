@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.DualPdf" parent="android:Theme.DeviceDefault.NoActionBar" />
+</resources>
