@@ -725,40 +725,47 @@ fun ReaderScreen(reader: Reader) {
     }
 
     val generateVocabAction: () -> Unit = {
-        isGenerating = true
-        genProgressCurrent = 0
-        genProgressTotal = 0
-        reader.generateVocab(
-            onProgress = { c, t -> 
-                genProgressCurrent = c
-                genProgressTotal = t
-            },
-            onDone = { generatedTempFile ->
-                try {
-                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                    val vocabDir = File(downloadsDir, "PdfHelperReader_files")
-                    if (!vocabDir.exists()) vocabDir.mkdirs()
-                    val expectedName = reader.expectedVocab ?: "vocab.pdf"
-                    val destFile = File(vocabDir, expectedName)
-                    if (destFile.exists()) destFile.delete()
-                    generatedTempFile.copyTo(destFile, overwrite = true)
-                    generatedTempFile.delete()
-                    
-                    android.media.MediaScannerConnection.scanFile(
-                        ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
-                    )
-                    
-                    reader.onVocabPicked(Uri.fromFile(destFile))
-                } catch (e: Exception) {
-                    Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val vocabDir = File(downloadsDir, "PdfHelperReader_files")
+        val expectedName = reader.expectedVocab ?: "vocab.pdf"
+        val existingFile = File(vocabDir, expectedName)
+
+        if (existingFile.exists()) {
+            Toast.makeText(ctx, "Vocab file already exists! Opening...", Toast.LENGTH_SHORT).show()
+            reader.onVocabPicked(Uri.fromFile(existingFile))
+        } else {
+            isGenerating = true
+            genProgressCurrent = 0
+            genProgressTotal = 0
+            reader.generateVocab(
+                onProgress = { c, t -> 
+                    genProgressCurrent = c
+                    genProgressTotal = t
+                },
+                onDone = { generatedTempFile ->
+                    try {
+                        if (!vocabDir.exists()) vocabDir.mkdirs()
+                        val destFile = File(vocabDir, expectedName)
+                        if (destFile.exists()) destFile.delete()
+                        generatedTempFile.copyTo(destFile, overwrite = true)
+                        generatedTempFile.delete()
+                        
+                        android.media.MediaScannerConnection.scanFile(
+                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                        )
+                        
+                        reader.onVocabPicked(Uri.fromFile(destFile))
+                    } catch (e: Exception) {
+                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                    isGenerating = false
+                },
+                onError = {
+                    isGenerating = false
+                    Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
                 }
-                isGenerating = false
-            },
-            onError = {
-                isGenerating = false
-                Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
-            }
-        )
+            )
+        }
     }
 
     if (isZenMode) {
@@ -781,6 +788,9 @@ fun ReaderScreen(reader: Reader) {
                         onCancelVocab = { reader.cancelVocab(); isGenerating = false }
                     )
                 }
+
+
+
                 Row(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
@@ -1141,6 +1151,23 @@ fun PdfPane(
             val doc = pane.doc
             if (doc != null) {
                 PageView(doc, pane.page, isDarkMode, pane, onPage)
+
+                if (isZenMode) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = "${pane.page + 1}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
             } else {
                 Box(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
