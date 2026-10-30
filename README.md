@@ -11,17 +11,19 @@
 
 ## 🌟 Key Features
 
-### 📖 Dual-Pane & Flexible Layouts
+### 📖 Dual-Pane & Adaptive Layouts
 *   **Synchronized Reading**: View your book and its dictionary/vocabulary sidecar side-by-side or stacked vertically.
+*   **Landscape Side-by-Side Mode**: Automatically arranges panes side-by-side with a vertical divider when rotated into landscape orientation, featuring a sleek, thinner top ribbon (`36.dp`) to maximize vertical real estate.
 *   **Flexible Split Mode (`S` Button)**: Easily cycle through three viewing modes:
     *   *Both*: Book and Vocabulary side-by-side (landscape) or top-and-bottom (portrait).
     *   *Book Only*: Full-screen primary book reader.
     *   *Vocab Only*: Full-screen vocabulary sidecar.
 
-### 📚 Native Vocabulary Generation
+### 📚 Smart Vocabulary Sidecar Generation
 *   Automatically parses your book and filters out common words using a bundled frequency dictionary (`google-10000-english-no-swears.txt`).
 *   Matches remaining complex or foreign words against a comprehensive bundled WordNet dictionary (`dictionary.json` containing 77,500+ rich NLTK definitions).
-*   Generates a dynamically paginated sidecar PDF (`_vocab.pdf`) saved directly to `Downloads/PdfHelperReader_files/`.
+*   **Smart Existence Check**: When generating a vocab file, the app first checks if it already exists in `Downloads/PdfHelperReader_files/`. If present, it opens immediately without regenerating.
+*   **Auto-Detection on Open**: Automatically detects and immediately opens existing vocabulary sidecars upon opening a book.
 
 ### 🔍 On-Device OCR
 *   Renders image-based or scanned PDFs to high-resolution bitmaps and uses Google ML Kit Text Recognition (`play-services-mlkit-text-recognition`) locally on-device.
@@ -30,10 +32,11 @@
 ### 🚀 High-Performance Rendering & Gestures
 *   **GPU-Accelerated Pinch-to-Zoom**: Smooth, silky pinch-to-zoom (up to 5x) backed by hardware layers with instant settling and high-res dynamic re-rendering.
 *   **LRU In-Memory Caching & Preloading**: Intelligent background preloading of adjacent pages (`page + 1` and `page - 1`) and an LRU bitmap cache for instantaneous page turning with zero lag.
-*   **Double-Tap Navigation**: Double-tap on the right side of any pane for the next page, or the left side for the previous page (independent per split).
+*   **Double-Tap Navigation**: Independent per-split page turning—double-tap on the right side of any pane for the next page, or the left side for the previous page.
 
 ### 🧘 Zen Mode & Customization
 *   **Zen Mode (`Z` Button)**: Hides all UI chrome and toolbars for a pure, distraction-free reading experience.
+*   **Per-Pane Page Badges**: Displays only the current page number (e.g. `24`) in a clean, button-like badge in the top-right corner of each active document pane in Zen mode.
 *   **Floating Controls**: Floating action buttons in Zen mode for instant bookmarking (`B`) and exiting Zen mode.
 *   **Dark Mode (`T` Button)**: Inverts PDF colors dynamically using high-performance `ColorMatrix` color filters for comfortable night reading.
 *   **Reading History & Bookmarks**: Automatically tracks the last 50 opened books and supports robust bookmarks per document.
@@ -70,7 +73,8 @@
 ---
 
 ## 📦 Downloading & Installing the App
-*   You can clone the repository and build the debug APK directly via Gradle:
+*   You can download pre-built APKs directly from the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page.
+*   Alternatively, build the debug APK directly via Gradle:
     ```bash
     ./gradlew assembleDebug
     ```
