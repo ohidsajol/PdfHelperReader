@@ -25,9 +25,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.core.content.ContextCompat
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import android.content.res.Configuration
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -66,11 +76,17 @@ class PdfDoc private constructor(
     val pageCount: Int = renderer.pageCount
     private val mutex = Mutex()
     @Volatile private var closed = false
+    private val bitmapCache = android.util.LruCache<String, Bitmap>(20)
 
     /** Renders [index] as a white-backed ARGB bitmap, [targetWidth] px wide (clamped by MAX_DIM). */
     suspend fun render(index: Int, targetWidth: Int): Bitmap = withContext(Dispatchers.IO) {
+        val cacheKey = "${index}_${targetWidth}"
+        bitmapCache.get(cacheKey)?.let { return@withContext it }
+
         mutex.withLock {
             check(!closed) { "Document is closed" }
+            bitmapCache.get(cacheKey)?.let { return@withContext it }
+
             val page = renderer.openPage(index)
             try {
                 val scale = min(targetWidth.toFloat() / page.width, MAX_DIM.toFloat() / page.height)
@@ -79,10 +95,20 @@ class PdfDoc private constructor(
                 val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                 bmp.eraseColor(AColor.WHITE)           // PdfRenderer needs an opaque background
                 page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmapCache.put(cacheKey, bmp)
                 bmp
             } finally {
                 page.close()
             }
+        }
+    }
+
+    fun preload(index: Int, targetWidth: Int) {
+        if (index < 0 || index >= pageCount || closed) return
+        val cacheKey = "${index}_${targetWidth}"
+        if (bitmapCache.get(cacheKey) != null) return
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { render(index, targetWidth) }
         }
     }
 
@@ -212,11 +238,18 @@ object Sidecar {
  *  Keys:  last_book_uri, tree_uri, book_page_<key>, vocab_page_<key>, vocab_uri_<key>
  *  <key> is derived from the book URI so every book keeps its own positions.
  * ========================================================================= */
+enum class SplitMode {
+    SPLIT_BOTH,
+    ONLY_BOOK,
+    ONLY_VOCAB
+}
+
 class Pane {
     var doc by mutableStateOf<PdfDoc?>(null)
     var page by mutableIntStateOf(0)
     var name by mutableStateOf<String?>(null)
     var message by mutableStateOf<String?>(null)   // error text shown in a card
+    var zoom by mutableFloatStateOf(1.0f)
 }
 
 data class Bookmark(val id: Long, val bookPage: Int, val vocabPage: Int, val name: String)
@@ -400,9 +433,13 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     
     fun getBookUri(): Uri? = bookUri
 
+    private var vocabJob: Job? = null
+    private var ocrJob: Job? = null
+
     fun generateVocab(onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
         val uri = bookUri ?: return
-        scope.launch(Dispatchers.IO) {
+        vocabJob?.cancel()
+        vocabJob = scope.launch(Dispatchers.IO) {
             try {
                 // 1. Copy the PDF to a local temp file because pdfbox needs a file
                 val inputPdf = File.createTempFile("book_in", ".pdf", ctx.cacheDir)
@@ -425,16 +462,23 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     onDone(outputPdf)
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onError(e)
+                if (e !is CancellationException) {
+                    withContext(Dispatchers.Main) {
+                        onError(e)
+                    }
                 }
             }
         }
     }
 
+    fun cancelVocab() {
+        vocabJob?.cancel()
+    }
+
     fun generateOcr(onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
         val uri = bookUri ?: return
-        scope.launch(Dispatchers.IO) {
+        ocrJob?.cancel()
+        ocrJob = scope.launch(Dispatchers.IO) {
             try {
                 val inputPdf = File.createTempFile("book_in", ".pdf", ctx.cacheDir)
                 ctx.contentResolver.openInputStream(uri)?.use { i ->
@@ -454,11 +498,17 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     onDone(outputPdf)
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onError(e)
+                if (e !is CancellationException) {
+                    withContext(Dispatchers.Main) {
+                        onError(e)
+                    }
                 }
             }
         }
+    }
+
+    fun cancelOcr() {
+        ocrJob?.cancel()
     }
 
     fun onTreePicked(uri: Uri) {
@@ -551,8 +601,12 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
         val saved = prefs.getString("vocab_uri_$bookKey", null)?.let(Uri::parse)
         val tree = prefs.getString("tree_uri", null)?.let(Uri::parse)
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val downloadsVocabFile = File(downloadsDir, "PdfHelperReader_files/$expected")
         val found = withContext(Dispatchers.IO) {
-            saved?.takeIf { Sidecar.canOpen(ctx, it) } ?: Sidecar.find(ctx, uri, expected, tree)
+            saved?.takeIf { Sidecar.canOpen(ctx, it) } 
+                ?: downloadsVocabFile.takeIf { it.exists() }?.let { Uri.fromFile(it) }
+                ?: Sidecar.find(ctx, uri, expected, tree)
         }
         if (found == null) {
             vocab.message = "Could not find \"$expected\" next to the book."
@@ -611,7 +665,10 @@ fun AppTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun ReaderScreen(reader: Reader) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ctx = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val topBarHeight = if (isLandscape) 36.dp else 48.dp
     
     var isGenerating by remember { mutableStateOf(false) }
     var generatedFile by remember { mutableStateOf<File?>(null) }
@@ -624,6 +681,10 @@ fun ReaderScreen(reader: Reader) {
 
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+
+    var splitMode by remember { mutableStateOf(SplitMode.SPLIT_BOTH) }
+    var showOcrConfirmDialog by remember { mutableStateOf(false) }
+    var isZenMode by remember { mutableStateOf(false) }
     
     val pickBook = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(reader::onBookPicked)
@@ -661,6 +722,89 @@ fun ReaderScreen(reader: Reader) {
                 permissionLauncher.launch(perms.toTypedArray())
             }
         }
+    }
+
+    val generateVocabAction: () -> Unit = {
+        isGenerating = true
+        genProgressCurrent = 0
+        genProgressTotal = 0
+        reader.generateVocab(
+            onProgress = { c, t -> 
+                genProgressCurrent = c
+                genProgressTotal = t
+            },
+            onDone = { generatedTempFile ->
+                try {
+                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    val vocabDir = File(downloadsDir, "PdfHelperReader_files")
+                    if (!vocabDir.exists()) vocabDir.mkdirs()
+                    val expectedName = reader.expectedVocab ?: "vocab.pdf"
+                    val destFile = File(vocabDir, expectedName)
+                    if (destFile.exists()) destFile.delete()
+                    generatedTempFile.copyTo(destFile, overwrite = true)
+                    generatedTempFile.delete()
+                    
+                    android.media.MediaScannerConnection.scanFile(
+                        ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                    )
+                    
+                    reader.onVocabPicked(Uri.fromFile(destFile))
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+                isGenerating = false
+            },
+            onError = {
+                isGenerating = false
+                Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        )
+    }
+
+    if (isZenMode) {
+        Surface(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                    DocumentPanesLayout(
+                        reader = reader,
+                        splitMode = splitMode,
+                        isLandscape = isLandscape,
+                        isZenMode = true,
+                        pickBook = pickBook,
+                        pickVocab = pickVocab,
+                        pickTree = pickTree,
+                        isGenerating = isGenerating,
+                        generatedFile = generatedFile,
+                        genProgressCurrent = genProgressCurrent,
+                        genProgressTotal = genProgressTotal,
+                        onGenerateVocab = generateVocabAction,
+                        onCancelVocab = { reader.cancelVocab(); isGenerating = false }
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FloatingActionButton(
+                        onClick = {
+                            reader.addBookmark()
+                            Toast.makeText(ctx, "Bookmarked!", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Text("B", modifier = Modifier.padding(horizontal = 16.dp))
+                    }
+                    FloatingActionButton(
+                        onClick = { isZenMode = false }
+                    ) {
+                        Text("Exit Zen", modifier = Modifier.padding(horizontal = 16.dp))
+                    }
+                }
+            }
+        }
+        return
     }
 
     Surface(Modifier.fillMaxSize()) {
@@ -734,15 +878,14 @@ fun ReaderScreen(reader: Reader) {
         }
 
         Box(Modifier.fillMaxSize()) {
-            Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
-                Row(
-                    Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = { reader.toggleDarkMode() }) { Text("T") }
-                    TextButton(onClick = { showHistory = true }) { Text("H") }
-                    if (reader.book.doc != null) {
+            if (showOcrConfirmDialog) {
+                AlertDialog(
+                    onDismissRequest = { showOcrConfirmDialog = false },
+                    title = { Text("Confirm OCR") },
+                    text = { Text("Apply OCR to this PDF? This will process the document and create a searchable text layer in a new PDF saved to Downloads/PdfHelperReader_files.") },
+                    confirmButton = {
                         TextButton(onClick = {
+                            showOcrConfirmDialog = false
                             isOcrGenerating = true
                             ocrProgressCurrent = 0
                             ocrProgressTotal = 0
@@ -780,134 +923,65 @@ fun ReaderScreen(reader: Reader) {
                                     Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
                                 }
                             )
-                        }) { Text("O") }
-                        TextButton(onClick = { reader.addBookmark() }) { Text("B") }
-                        TextButton(onClick = { showBookmarks = true }) { Text("BL") }
+                        }) { Text("Confirm") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showOcrConfirmDialog = false }) { Text("Cancel") }
                     }
-                    Spacer(modifier = Modifier.weight(1f))
+                )
+            }
+
+            Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
+                Row(
+                    Modifier.fillMaxWidth().height(topBarHeight).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val pad = PaddingValues(horizontal = 4.dp)
+                    TextButton(onClick = { reader.toggleDarkMode() }, contentPadding = pad) { Text("T") }
+                    TextButton(onClick = { showHistory = true }, contentPadding = pad) { Text("H") }
+                    TextButton(onClick = { isZenMode = true }, contentPadding = pad) { Text("Z") }
+                    TextButton(onClick = {
+                        splitMode = when (splitMode) {
+                            SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
+                            SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
+                            SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
+                        }
+                    }, contentPadding = pad) {
+                        Text(when (splitMode) {
+                            SplitMode.SPLIT_BOTH -> "Both"
+                            SplitMode.ONLY_BOOK -> "Book"
+                            SplitMode.ONLY_VOCAB -> "Vocab"
+                        })
+                    }
+                    if (reader.book.doc != null) {
+                        TextButton(onClick = { showOcrConfirmDialog = true }, contentPadding = pad) { Text("O") }
+                        TextButton(onClick = { reader.addBookmark() }, contentPadding = pad) { Text("B") }
+                        TextButton(onClick = { showBookmarks = true }, contentPadding = pad) { Text("BL") }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
                     FilledTonalButton(
                         onClick = { pickBook.launch(PDF_MIME) },
-                        contentPadding = PaddingValues(horizontal = 12.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp)
                     ) { Text("OB") }
                 }
                 HorizontalDivider()
 
-            // ---- TOP: book ----
-            PdfPane(
-                label = "BOOK",
-                pane = reader.book,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                onPage = reader::setBookPage,
-                isDarkMode = reader.isDarkMode
-            ) {
-                MessageCard(
-                    title = if (reader.book.message != null) "Could not open the book" else "No book open",
-                    body = reader.book.message ?: "Choose a PDF to start reading."
-                ) {
-                    Button(onClick = { pickBook.launch(PDF_MIME) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Open book")
-                    }
-                }
+                DocumentPanesLayout(
+                    reader = reader,
+                    splitMode = splitMode,
+                    isLandscape = isLandscape,
+                    isZenMode = false,
+                    pickBook = pickBook,
+                    pickVocab = pickVocab,
+                    pickTree = pickTree,
+                    isGenerating = isGenerating,
+                    generatedFile = generatedFile,
+                    genProgressCurrent = genProgressCurrent,
+                    genProgressTotal = genProgressTotal,
+                    onGenerateVocab = generateVocabAction,
+                    onCancelVocab = { reader.cancelVocab(); isGenerating = false }
+                )
             }
-
-            HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-
-            // ---- BOTTOM: vocabulary sidecar ----
-            PdfPane(
-                label = "VOCAB",
-                pane = reader.vocab,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                onPage = reader::setVocabPage,
-                isDarkMode = reader.isDarkMode
-            ) {
-                if (isGenerating && generatedFile == null) {
-                    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                        Card {
-                            Column(Modifier.padding(24.dp).fillMaxWidth(0.8f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Generating Vocabulary PDF...", style = MaterialTheme.typography.titleSmall)
-                                Spacer(Modifier.height(16.dp))
-                                if (genProgressTotal > 0) {
-                                    val progress = genProgressCurrent.toFloat() / genProgressTotal
-                                    val percentage = (progress * 100).toInt()
-                                    LinearProgressIndicator(
-                                        progress = { progress },
-                                        modifier = Modifier.fillMaxWidth().height(8.dp)
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                    Text("Generating Vocab PDF: $percentage% ($genProgressCurrent/$genProgressTotal)", style = MaterialTheme.typography.bodySmall)
-                                } else {
-                                    CircularProgressIndicator()
-                                    Spacer(Modifier.height(16.dp))
-                                    Text("Generating Vocab PDF: 0%", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                        }
-                    }
-                } else if (reader.book.doc == null) {
-                    MessageCard("Vocabulary", "Open a book first; its \"_vocab.pdf\" sidecar loads automatically.") {}
-                } else {
-                    MessageCard(
-                        title = "Vocabulary PDF unavailable",
-                        body = (reader.vocab.message ?: "Not loaded.") +
-                            "\nAndroid only lets the app see files you grant. Pick the vocab file once, " +
-                            "or grant access to the folder so it is found automatically."
-                    ) {
-                        Button(onClick = {
-                            isGenerating = true
-                            genProgressCurrent = 0
-                            genProgressTotal = 0
-                            reader.generateVocab(
-                                onProgress = { c, t -> 
-                                    genProgressCurrent = c
-                                    genProgressTotal = t
-                                },
-                                onDone = { generatedTempFile ->
-                                    try {
-                                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                        val vocabDir = File(downloadsDir, "PdfHelperReader_files")
-                                        if (!vocabDir.exists()) {
-                                            vocabDir.mkdirs()
-                                        }
-                                        val expectedName = reader.expectedVocab ?: "vocab.pdf"
-                                        val destFile = File(vocabDir, expectedName)
-                                        if (destFile.exists()) {
-                                            destFile.delete()
-                                        }
-                                        generatedTempFile.copyTo(destFile, overwrite = true)
-                                        generatedTempFile.delete()
-                                        
-                                        // Tell Android's MediaScanner about the new file so it's fully accessible to the user
-                                        android.media.MediaScannerConnection.scanFile(
-                                            ctx,
-                                            arrayOf(destFile.absolutePath),
-                                            arrayOf("application/pdf"),
-                                            null
-                                        )
-                                        
-                                        reader.onVocabPicked(Uri.fromFile(destFile))
-                                    } catch (e: Exception) {
-                                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                    isGenerating = false
-                                },
-                                onError = {
-                                    isGenerating = false
-                                    Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Generate Vocab PDF")
-                        }
-                        Button(onClick = { pickVocab.launch(PDF_MIME) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Choose vocab PDF")
-                        }
-                        OutlinedButton(onClick = { pickTree.launch(null) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Grant folder access")
-                        }
-                    }
-                }
-            } // End of PdfPane
-            } // End of Column
 
             if (isOcrGenerating) {
                 Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -916,7 +990,7 @@ fun ReaderScreen(reader: Reader) {
                             Text("OCRing PDF...", style = MaterialTheme.typography.titleSmall)
                             Spacer(Modifier.height(16.dp))
                             if (ocrProgressTotal > 0) {
-                                val progress = ocrProgressCurrent.toFloat() / ocrProgressTotal
+                                val progress = genProgressCurrent.toFloat() / genProgressTotal
                                 val percentage = (progress * 100).toInt()
                                 LinearProgressIndicator(
                                     progress = { progress },
@@ -929,13 +1003,125 @@ fun ReaderScreen(reader: Reader) {
                                 Spacer(Modifier.height(16.dp))
                                 Text("Applying OCR: 0%", style = MaterialTheme.typography.bodySmall)
                             }
+                            Spacer(Modifier.height(16.dp))
+                            OutlinedButton(onClick = {
+                                reader.cancelOcr()
+                                isOcrGenerating = false
+                            }) {
+                                Text("Cancel")
+                            }
                         }
                     }
                 }
             }
-        } // End of Box
-    } // End of Surface
-} // End of ReaderScreen
+        }
+    }
+}
+
+@Composable
+fun DocumentPanesLayout(
+    modifier: Modifier = Modifier,
+    reader: Reader,
+    splitMode: SplitMode,
+    isLandscape: Boolean,
+    isZenMode: Boolean = false,
+    pickBook: androidx.activity.result.ActivityResultLauncher<Array<String>>,
+    pickVocab: androidx.activity.result.ActivityResultLauncher<Array<String>>,
+    pickTree: androidx.activity.result.ActivityResultLauncher<Uri?>,
+    isGenerating: Boolean,
+    generatedFile: File?,
+    genProgressCurrent: Int,
+    genProgressTotal: Int,
+    onGenerateVocab: () -> Unit,
+    onCancelVocab: () -> Unit
+) {
+    val ctx = LocalContext.current
+
+    val emptyBookCard: @Composable () -> Unit = {
+        MessageCard(
+            title = if (reader.book.message != null) "Could not open the book" else "No book open",
+            body = reader.book.message ?: "Choose a PDF to start reading."
+        ) {
+            Button(onClick = { pickBook.launch(PDF_MIME) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Open book")
+            }
+        }
+    }
+
+    val emptyVocabCard: @Composable () -> Unit = {
+        if (isGenerating && generatedFile == null) {
+            Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                Card {
+                    Column(Modifier.padding(24.dp).fillMaxWidth(0.8f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Generating Vocabulary PDF...", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(16.dp))
+                        if (genProgressTotal > 0) {
+                            val progress = genProgressCurrent.toFloat() / genProgressTotal
+                            val percentage = (progress * 100).toInt()
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth().height(8.dp)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text("Generating Vocab PDF: $percentage% ($genProgressCurrent/$genProgressTotal)", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(16.dp))
+                            Text("Generating Vocab PDF: 0%", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedButton(onClick = onCancelVocab) {
+                            Text("Cancel")
+                        }
+                    }
+                }
+            }
+        } else if (reader.book.doc == null) {
+            MessageCard("Vocabulary", "Open a book first; its \"_vocab.pdf\" sidecar loads automatically.") {}
+        } else {
+            MessageCard(
+                title = "Vocabulary PDF unavailable",
+                body = (reader.vocab.message ?: "Not loaded.") +
+                    "\nAndroid only lets the app see files you grant. Pick the vocab file once, " +
+                    "or grant access to the folder so it is found automatically."
+            ) {
+                Button(onClick = onGenerateVocab, modifier = Modifier.fillMaxWidth()) {
+                    Text("Generate Vocab PDF")
+                }
+                Button(onClick = { pickVocab.launch(PDF_MIME) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Choose vocab PDF")
+                }
+                OutlinedButton(onClick = { pickTree.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Grant folder access")
+                }
+            }
+        }
+    }
+
+    when (splitMode) {
+        SplitMode.SPLIT_BOTH -> {
+            if (isLandscape) {
+                Row(modifier) {
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, emptyBookCard)
+                    VerticalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, emptyVocabCard)
+                }
+            } else {
+                Column(modifier) {
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, emptyBookCard)
+                    HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, emptyVocabCard)
+                }
+            }
+        }
+        SplitMode.ONLY_BOOK -> {
+            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, emptyBookCard)
+        }
+        SplitMode.ONLY_VOCAB -> {
+            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, emptyVocabCard)
+        }
+    }
+}
 
 @Composable
 fun PdfPane(
@@ -944,14 +1130,17 @@ fun PdfPane(
     modifier: Modifier,
     onPage: (Int) -> Unit,
     isDarkMode: Boolean,
+    isZenMode: Boolean = false,
     empty: @Composable () -> Unit,
 ) {
     Column(modifier) {
-        PaneBar(label, pane, onPage)
+        if (!isZenMode) {
+            PaneBar(label, pane, onPage)
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val doc = pane.doc
             if (doc != null) {
-                PageView(doc, pane.page, isDarkMode)
+                PageView(doc, pane.page, isDarkMode, pane, onPage)
             } else {
                 Box(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -968,18 +1157,32 @@ fun PaneBar(label: String, pane: Pane, onPage: (Int) -> Unit) {
     var showDialog by remember { mutableStateOf(false) }
     var showNameDialog by remember { mutableStateOf(false) }
     val count = pane.doc?.pageCount ?: 0
-    val pad = PaddingValues(horizontal = 8.dp)
+    val pad = PaddingValues(horizontal = 4.dp)
 
     Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
         Row(
-            Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 8.dp),
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(4.dp))
             Text(pane.name ?: "—", style = MaterialTheme.typography.bodySmall, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).clickable { showNameDialog = true })
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable { showNameDialog = true })
+            Spacer(Modifier.width(8.dp))
+            
+            TextButton(enabled = count > 0, contentPadding = pad,
+                onClick = { pane.zoom = (pane.zoom - 0.25f).coerceAtLeast(1.0f) }) { Text("-") }
+            TextButton(enabled = count > 0, contentPadding = pad,
+                onClick = { pane.zoom = 1.0f }) { Text("${(pane.zoom * 100).toInt()}%") }
+            TextButton(enabled = count > 0, contentPadding = pad,
+                onClick = { pane.zoom = (pane.zoom + 0.25f).coerceAtMost(5.0f) }) { Text("+") }
+
+            Spacer(Modifier.width(8.dp))
             TextButton(enabled = count > 0 && pane.page > 0, contentPadding = pad,
                 onClick = { onPage(pane.page - 1) }) { Text("‹ Prev") }
             TextButton(enabled = count > 0, contentPadding = pad,
@@ -1025,24 +1228,35 @@ fun PaneBar(label: String, pane: Pane, onPage: (Int) -> Unit) {
     }
 }
 
-/** Renders one page fit-to-width inside a vertically scrollable area. */
+/** Renders one page fit-to-width inside a scrollable area with pinch-to-zoom, centering, and horizontal page swiping. */
 @Composable
-fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean) {
+fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean, pane: Pane, onPage: (Int) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
         var image by remember(doc) { mutableStateOf<ImageBitmap?>(null) }
         var error by remember(doc) { mutableStateOf<String?>(null) }
         var loading by remember(doc) { mutableStateOf(true) }
-        val scroll = rememberScrollState()
+        val verticalScrollState = rememberScrollState()
+        val horizontalScrollState = rememberScrollState()
 
-        LaunchedEffect(page) { scroll.scrollTo(0) }
+        var gestureScale by remember { mutableFloatStateOf(1f) }
 
-        LaunchedEffect(doc, page, widthPx) {
+        LaunchedEffect(page) { 
+            verticalScrollState.scrollTo(0)
+            horizontalScrollState.scrollTo(0)
+            pane.zoom = 1.0f
+            gestureScale = 1.0f
+        }
+
+        LaunchedEffect(doc, page, widthPx, pane.zoom) {
             loading = true
             error = null
             try {
-                // 1.5x oversampling keeps small vocabulary text crisp.
-                val bmp = doc.render(page, (widthPx * 1.5f).toInt().coerceIn(200, 2048))
+                val targetW = (widthPx * 1.5f * pane.zoom).toInt().coerceIn(200, 4096)
+                doc.preload(page + 1, targetW)
+                doc.preload(page - 1, targetW)
+
+                val bmp = doc.render(page, targetW)
                 image = bmp.asImageBitmap()
             } catch (e: CancellationException) {
                 throw e
@@ -1056,19 +1270,65 @@ fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean) {
         val invertMatrix = androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(
             -1f,  0f,  0f, 0f, 255f,
              0f, -1f,  0f, 0f, 255f,
-             0f,  0f, -1f, 0f, 255f,
+             0f,  0f,  -1f, 0f, 255f,
              0f,  0f,  0f, 1f,   0f
         ))
         val colorFilter = if (isDarkMode) androidx.compose.ui.graphics.ColorFilter.colorMatrix(invertMatrix) else null
 
-        Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(page) {
+                    detectTapGestures(
+                        onDoubleTap = { offset ->
+                            val totalCount = doc.pageCount
+                            val halfWidth = size.width / 2f
+                            if (offset.x > halfWidth) {
+                                if (pane.page < totalCount - 1) {
+                                    onPage(pane.page + 1)
+                                }
+                            } else {
+                                if (pane.page > 0) {
+                                    onPage(pane.page - 1)
+                                }
+                            }
+                        }
+                    )
+                }
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, _, zoomChange, _ ->
+                        gestureScale = (gestureScale * zoomChange).coerceIn(0.5f, 5.0f / pane.zoom)
+                    }
+                }
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.changes.all { !it.pressed }) {
+                                if (gestureScale != 1.0f) {
+                                    pane.zoom = (pane.zoom * gestureScale).coerceIn(1.0f, 5.0f)
+                                    gestureScale = 1.0f
+                                }
+                            }
+                        }
+                    }
+                }
+                .horizontalScroll(horizontalScrollState)
+                .verticalScroll(verticalScrollState),
+            contentAlignment = Alignment.Center
+        ) {
             image?.let {
                 Image(
                     bitmap = it,
                     contentDescription = "PDF page ${page + 1}",
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .width(with(LocalDensity.current) { (widthPx * pane.zoom).toDp() })
+                        .graphicsLayer(
+                            scaleX = gestureScale,
+                            scaleY = gestureScale
+                        ),
                     contentScale = ContentScale.FillWidth,
-                    filterQuality = FilterQuality.High,
+                    filterQuality = FilterQuality.Medium,
                     colorFilter = colorFilter
                 )
             }
