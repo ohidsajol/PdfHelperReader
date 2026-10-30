@@ -402,13 +402,13 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         val defaultExtracted = prefs.getBoolean("default_book_extracted", false)
         if (!defaultExtracted) {
             try {
-                val destFile = File(ctx.getExternalFilesDir(null), "crime-and-punishment.pdf")
-                ctx.assets.open("crime-and-punishment.pdf").use { i ->
+                val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
+                ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
                 editPrefs { putBoolean("default_book_extracted", true) }
                 val uri = Uri.fromFile(destFile)
-                addToHistory(uri, "Crime and Punishment")
+                addToHistory(uri, "Tutorial")
                 
                 if (!prefs.contains("last_book_uri")) {
                     openBook(uri)
