@@ -8,6 +8,8 @@
     <application
         android:requestLegacyExternalStorage="true"
         android:allowBackup="true"
+        android:icon="@drawable/pdf_helper_icon"
+        android:roundIcon="@drawable/pdf_helper_icon"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.DualPdf">
