@@ -18,8 +18,18 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.keystore")
+            storePassword = "pdfhelper123"
+            keyAlias = "pdfhelperreader"
+            keyPassword = "pdfhelper123"
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
         }
     }
