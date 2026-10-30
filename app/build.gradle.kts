@@ -47,6 +47,9 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.itextpdf:itextg:5.5.10")
     implementation("com.google.code.gson:gson:2.11.0")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 }

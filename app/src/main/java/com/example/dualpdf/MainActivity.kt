@@ -357,6 +357,35 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         }
     }
 
+    fun generateOcr(onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
+        val uri = bookUri ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val inputPdf = File.createTempFile("book_in", ".pdf", ctx.cacheDir)
+                ctx.contentResolver.openInputStream(uri)?.use { i ->
+                    inputPdf.outputStream().use { o -> i.copyTo(o) }
+                }
+                
+                val outputPdf = File(ctx.cacheDir, "ocr_output.pdf")
+                
+                OcrProcessor.processPdf(ctx, inputPdf, outputPdf) { current, total ->
+                    scope.launch(Dispatchers.Main) {
+                        onProgress(current, total)
+                    }
+                }
+                
+                inputPdf.delete()
+                withContext(Dispatchers.Main) {
+                    onDone(outputPdf)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
+            }
+        }
+    }
+
     fun onTreePicked(uri: Uri) {
         persist(uri)
         prefs.edit().putString("tree_uri", uri.toString()).apply()
@@ -507,10 +536,16 @@ fun AppTheme(content: @Composable () -> Unit) {
 @Composable
 fun ReaderScreen(reader: Reader) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    
     var isGenerating by remember { mutableStateOf(false) }
     var generatedFile by remember { mutableStateOf<File?>(null) }
     var genProgressCurrent by remember { mutableIntStateOf(0) }
     var genProgressTotal by remember { mutableIntStateOf(0) }
+    
+    var isOcrGenerating by remember { mutableStateOf(false) }
+    var ocrProgressCurrent by remember { mutableIntStateOf(0) }
+    var ocrProgressTotal by remember { mutableIntStateOf(0) }
+
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     
@@ -622,23 +657,63 @@ fun ReaderScreen(reader: Reader) {
             )
         }
 
-        Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("pdfHelperReader", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = { showHistory = true }) { Text("H") }
-                if (reader.book.doc != null) {
-                    TextButton(onClick = { reader.addBookmark() }) { Text("B") }
-                    TextButton(onClick = { showBookmarks = true }) { Text("BL") }
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
+                Row(
+                    Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("pdfHelperReader", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showHistory = true }) { Text("H") }
+                    if (reader.book.doc != null) {
+                        TextButton(onClick = {
+                            isOcrGenerating = true
+                            ocrProgressCurrent = 0
+                            ocrProgressTotal = 0
+                            reader.generateOcr(
+                                onProgress = { c, t ->
+                                    ocrProgressCurrent = c
+                                    ocrProgressTotal = t
+                                },
+                                onDone = { generatedTempFile ->
+                                    try {
+                                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                                        val ocrDir = File(downloadsDir, "ocr_files")
+                                        if (!ocrDir.exists()) ocrDir.mkdirs()
+                                        
+                                        val originalName = reader.book.name?.removeSuffix(".pdf") ?: "book"
+                                        val expectedName = "${originalName}_ocr.pdf"
+                                        val destFile = File(ocrDir, expectedName)
+                                        if (destFile.exists()) destFile.delete()
+                                        
+                                        generatedTempFile.copyTo(destFile, overwrite = true)
+                                        generatedTempFile.delete()
+                                        
+                                        android.media.MediaScannerConnection.scanFile(
+                                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                                        )
+                                        
+                                        reader.onBookPicked(Uri.fromFile(destFile))
+                                    } catch (e: Exception) {
+                                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                    isOcrGenerating = false
+                                },
+                                onError = {
+                                    isOcrGenerating = false
+                                    Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
+                                }
+                            )
+                        }) { Text("O") }
+                        TextButton(onClick = { reader.addBookmark() }) { Text("B") }
+                        TextButton(onClick = { showBookmarks = true }) { Text("BL") }
+                    }
+                    FilledTonalButton(
+                        onClick = { pickBook.launch(PDF_MIME) },
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) { Text("Open book") }
                 }
-                FilledTonalButton(
-                    onClick = { pickBook.launch(PDF_MIME) },
-                    contentPadding = PaddingValues(horizontal = 12.dp)
-                ) { Text("Open book") }
-            }
-            HorizontalDivider()
+                HorizontalDivider()
 
             // ---- TOP: book ----
             PdfPane(
@@ -752,10 +827,36 @@ fun ReaderScreen(reader: Reader) {
                         }
                     }
                 }
+            } // End of PdfPane
+            } // End of Column
+
+            if (isOcrGenerating) {
+                Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Card {
+                        Column(Modifier.padding(24.dp).fillMaxWidth(0.8f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("OCRing PDF...", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(16.dp))
+                            if (ocrProgressTotal > 0) {
+                                val progress = ocrProgressCurrent.toFloat() / ocrProgressTotal
+                                val percentage = (progress * 100).toInt()
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth().height(8.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text("Applying OCR: $percentage% ($ocrProgressCurrent/$ocrProgressTotal)", style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(16.dp))
+                                Text("Applying OCR: 0%", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
             }
-        }
-    }
-}
+        } // End of Box
+    } // End of Surface
+} // End of ReaderScreen
 
 @Composable
 fun PdfPane(
