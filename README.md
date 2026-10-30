@@ -56,6 +56,26 @@
 
 ---
 
+## 🔮 Future Enhancements & Contributing Roadmap
+
+We welcome contributions from the open-source community! If you're looking to help improve PdfHelperReader, here are some key areas and feature additions planned for future releases:
+
+### 1. ⚡ Advanced Performance & Rendering
+*   **Tile-Based Rendering**: Implement tile-based progressive loading for ultra-high-resolution zooming without large memory footprints.
+*   **Predictive Pre-Caching**: Expand LRU caching to predict reading velocity and pre-render pages further ahead.
+
+### 2. 🤹 Gesture & Navigation Refinements
+*   **Advanced Horizontal Swiping**: Fine-tune gesture conflict resolution for fluid horizontal page-flipping physics animations.
+*   **Custom Shortcuts**: Add keyboard shortcuts and hardware volume-button page navigation.
+
+### 3. 🧠 Learning & Productivity Tools
+*   **Full-Text PDF Search**: Implement keyword and phrase search across both book and vocabulary sidecar documents.
+*   **Anki Flashcard Export**: Export generated vocabulary lists and definitions directly into Anki-compatible `.apkg` or CSV files.
+*   **On-Device AI Integration**: Integrate on-device LLMs (such as LiteRT or ML Kit Prompt API) for contextual sentence translations and word explanations.
+*   **Annotations & Highlights**: Support text highlighting, underlining, and margin notes with persistence.
+
+---
+
 ## 🚀 Getting Started & Building
 
 1.  **Clone the Repository**:
