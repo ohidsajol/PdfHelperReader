@@ -231,6 +231,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     var expectedVocab by mutableStateOf<String?>(null)
         private set
 
+    var isDarkMode by mutableStateOf(false)
+        private set
+
     val bookmarks = mutableStateListOf<Bookmark>()
     val history = mutableStateListOf<HistoryEntry>()
 
@@ -240,9 +243,38 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     init {
         // Remove stale temp copies from earlier runs.
         ctx.cacheDir.listFiles { f -> f.name.startsWith("pdf_") }?.forEach { it.delete() }
+        isDarkMode = prefs.getBoolean("is_dark_mode", false)
     }
 
-    private fun keyOf(uri: Uri) = uri.toString().hashCode().toUInt().toString(16)
+    private suspend fun computeHash(ctx: Context, uri: Uri): String = withContext(Dispatchers.IO) {
+        try {
+            ctx.contentResolver.openInputStream(uri)?.use { i ->
+                val md = java.security.MessageDigest.getInstance("MD5")
+                val buffer = ByteArray(1024 * 64)
+                var read = i.read(buffer)
+                var total = 0L
+                while (read != -1 && total < 1024 * 1024 * 2) { 
+                    md.update(buffer, 0, read)
+                    total += read
+                    read = i.read(buffer)
+                }
+                ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                        if (sizeIdx != -1) md.update(c.getLong(sizeIdx).toString().toByteArray())
+                    }
+                }
+                md.digest().joinToString("") { "%02x".format(it) }
+            } ?: uri.toString().hashCode().toUInt().toString(16)
+        } catch (e: Exception) {
+            uri.toString().hashCode().toUInt().toString(16)
+        }
+    }
+
+    fun toggleDarkMode() {
+        isDarkMode = !isDarkMode
+        editPrefs { putBoolean("is_dark_mode", isDarkMode) }
+    }
 
     private fun persist(uri: Uri) {
         runCatching {
@@ -254,6 +286,46 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         is SecurityException -> "Permission denied, or the PDF is password-protected."
         is FileNotFoundException -> "File not found (it may have been moved or deleted)."
         else -> e.message ?: e.javaClass.simpleName
+    }
+
+    private val stateFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "vocab_files/.pdfHelperReader_state.json")
+
+    private fun syncToDisk() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                stateFile.parentFile?.mkdirs()
+                val map = prefs.all
+                val json = Gson().toJson(map)
+                stateFile.writeText(json)
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun syncFromDisk() {
+        try {
+            if (stateFile.exists()) {
+                val json = stateFile.readText()
+                val type = object : TypeToken<Map<String, Any>>() {}.type
+                val map: Map<String, Any> = Gson().fromJson(json, type)
+                val editor = prefs.edit()
+                map.forEach { (k, v) ->
+                    if (k.startsWith("book_page_") || k.startsWith("vocab_page_") || k == "is_dark_mode") {
+                        if (v is Boolean) editor.putBoolean(k, v)
+                        else if (v is Number) editor.putInt(k, v.toInt())
+                    } else if (k == "default_book_extracted") {
+                        if (v is Boolean) editor.putBoolean(k, v)
+                    } else {
+                        editor.putString(k, v.toString())
+                    }
+                }
+                editor.apply()
+            }
+        } catch (e: Exception) {}
+    }
+
+    private fun editPrefs(block: android.content.SharedPreferences.Editor.() -> Unit) {
+        prefs.edit().apply(block).apply()
+        syncToDisk()
     }
 
     // ---- public entry points -------------------------------------------------
@@ -270,7 +342,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     private fun saveHistory() {
         val json = Gson().toJson(history)
-        prefs.edit().putString("history", json).apply()
+        editPrefs { putString("history", json) }
     }
 
     private fun addToHistory(uri: Uri, name: String) {
@@ -288,6 +360,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     /** Reopen whatever was open last time. */
     fun restore() {
+        syncFromDisk()
+        isDarkMode = prefs.getBoolean("is_dark_mode", false)
+        
         loadBookmarks()
         loadHistory()
         
@@ -298,7 +373,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("crime-and-punishment.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                prefs.edit().putBoolean("default_book_extracted", true).apply()
+                editPrefs { putBoolean("default_book_extracted", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Crime and Punishment")
                 
@@ -319,7 +394,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     fun onVocabPicked(uri: Uri) {
         if (bookUri == null) return
         persist(uri)
-        prefs.edit().putString("vocab_uri_$bookKey", uri.toString()).apply()
+        editPrefs { putString("vocab_uri_$bookKey", uri.toString()) }
         scope.launch { lock.withLock { loadVocab() } }
     }
     
@@ -437,11 +512,12 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     private fun openBook(uri: Uri) {
         scope.launch {
+            val hashKey = computeHash(ctx, uri)
             lock.withLock {
                 closePane(book); closePane(vocab)
                 vocab.message = null; vocab.name = null; expectedVocab = null
                 bookUri = uri
-                bookKey = keyOf(uri)
+                bookKey = hashKey
                 book.message = null
                 book.name = withContext(Dispatchers.IO) { Sidecar.displayName(ctx, uri) }
                     ?: uri.lastPathSegment ?: "book.pdf"
@@ -453,7 +529,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     if (doc.pageCount < 1) { doc.close(); throw IOException("The PDF has no pages") }
                     book.page = prefs.getInt("book_page_$bookKey", 0).coerceIn(0, doc.pageCount - 1)
                     book.doc = doc
-                    prefs.edit().putString("last_book_uri", uri.toString()).apply()
+                    editPrefs { putString("last_book_uri", uri.toString()) }
                     loadBookmarks()
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
@@ -663,7 +739,7 @@ fun ReaderScreen(reader: Reader) {
                     Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("pdfHelperReader", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { reader.toggleDarkMode() }) { Text("T") }
                     TextButton(onClick = { showHistory = true }) { Text("H") }
                     if (reader.book.doc != null) {
                         TextButton(onClick = {
@@ -678,7 +754,7 @@ fun ReaderScreen(reader: Reader) {
                                 onDone = { generatedTempFile ->
                                     try {
                                         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                        val ocrDir = File(downloadsDir, "ocr_files")
+                                        val ocrDir = File(downloadsDir, "vocab_files")
                                         if (!ocrDir.exists()) ocrDir.mkdirs()
                                         
                                         val originalName = reader.book.name?.removeSuffix(".pdf") ?: "book"
@@ -708,10 +784,11 @@ fun ReaderScreen(reader: Reader) {
                         TextButton(onClick = { reader.addBookmark() }) { Text("B") }
                         TextButton(onClick = { showBookmarks = true }) { Text("BL") }
                     }
+                    Spacer(modifier = Modifier.weight(1f))
                     FilledTonalButton(
                         onClick = { pickBook.launch(PDF_MIME) },
                         contentPadding = PaddingValues(horizontal = 12.dp)
-                    ) { Text("Open book") }
+                    ) { Text("OB") }
                 }
                 HorizontalDivider()
 
@@ -720,7 +797,8 @@ fun ReaderScreen(reader: Reader) {
                 label = "BOOK",
                 pane = reader.book,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                onPage = reader::setBookPage
+                onPage = reader::setBookPage,
+                isDarkMode = reader.isDarkMode
             ) {
                 MessageCard(
                     title = if (reader.book.message != null) "Could not open the book" else "No book open",
@@ -739,7 +817,8 @@ fun ReaderScreen(reader: Reader) {
                 label = "VOCAB",
                 pane = reader.vocab,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                onPage = reader::setVocabPage
+                onPage = reader::setVocabPage,
+                isDarkMode = reader.isDarkMode
             ) {
                 if (isGenerating && generatedFile == null) {
                     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -864,6 +943,7 @@ fun PdfPane(
     pane: Pane,
     modifier: Modifier,
     onPage: (Int) -> Unit,
+    isDarkMode: Boolean,
     empty: @Composable () -> Unit,
 ) {
     Column(modifier) {
@@ -871,7 +951,7 @@ fun PdfPane(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val doc = pane.doc
             if (doc != null) {
-                PageView(doc, pane.page)
+                PageView(doc, pane.page, isDarkMode)
             } else {
                 Box(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -947,7 +1027,7 @@ fun PaneBar(label: String, pane: Pane, onPage: (Int) -> Unit) {
 
 /** Renders one page fit-to-width inside a vertically scrollable area. */
 @Composable
-fun PageView(doc: PdfDoc, page: Int) {
+fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
         var image by remember(doc) { mutableStateOf<ImageBitmap?>(null) }
@@ -973,6 +1053,14 @@ fun PageView(doc: PdfDoc, page: Int) {
             }
         }
 
+        val invertMatrix = androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(
+            -1f,  0f,  0f, 0f, 255f,
+             0f, -1f,  0f, 0f, 255f,
+             0f,  0f, -1f, 0f, 255f,
+             0f,  0f,  0f, 1f,   0f
+        ))
+        val colorFilter = if (isDarkMode) androidx.compose.ui.graphics.ColorFilter.colorMatrix(invertMatrix) else null
+
         Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
             image?.let {
                 Image(
@@ -980,7 +1068,8 @@ fun PageView(doc: PdfDoc, page: Int) {
                     contentDescription = "PDF page ${page + 1}",
                     modifier = Modifier.fillMaxWidth(),
                     contentScale = ContentScale.FillWidth,
-                    filterQuality = FilterQuality.High
+                    filterQuality = FilterQuality.High,
+                    colorFilter = colorFilter
                 )
             }
         }
