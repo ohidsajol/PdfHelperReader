@@ -17,6 +17,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStreamReader
 
+data class VocabResult(
+    val outputPdf: File,
+    val pageMap: Map<Int, Int> // bookPage -> vocabPage
+)
+
 object VocabGenerator {
 
     private var commonWords = setOf<String>()
@@ -46,18 +51,39 @@ object VocabGenerator {
         initialized = true
     }
 
+    private fun lookupDefinition(word: String): String {
+        val wLower = word.lowercase()
+
+        // 1. Direct lowercase lookup
+        var defn = dictionary[wLower] ?: return ""
+        if (defn.isBlank()) return ""
+
+        // 2. Reference resolution ($#$root_key)
+        if (defn.startsWith("\$#\$")) {
+            val rootKey = defn.removePrefix("\$#\$").trim().lowercase()
+            val rootDef = dictionary[rootKey]
+            if (!rootDef.isNullOrBlank()) {
+                defn = rootDef
+            }
+        }
+
+        return defn
+    }
+
     suspend fun generate(
         ctx: Context,
         inputPdf: File,
         outputPdf: File,
+        pageRange: IntRange? = null,
         onProgress: suspend (current: Int, total: Int) -> Unit
-    ) = withContext(Dispatchers.IO) {
+    ): VocabResult = withContext(Dispatchers.IO) {
         init(ctx)
 
         val wordsRegex = Regex("\\b[a-zA-Z]{4,}\\b")
 
         var reader: PdfReader? = null
         val androidDoc = PdfDocument()
+        val pageMap = mutableMapOf<Int, Int>()
 
         val textPaint = TextPaint().apply {
             color = Color.DKGRAY
@@ -87,10 +113,17 @@ object VocabGenerator {
             reader = PdfReader(inputPdf.absolutePath)
             val totalPages = reader.numberOfPages
 
+            val range = if (pageRange != null) {
+                (pageRange.first.coerceIn(1, totalPages))..(pageRange.last.coerceIn(1, totalPages))
+            } else {
+                1..totalPages
+            }
+
             var vocabPageNum = 1
 
-            for (i in 1..totalPages) {
-                onProgress(i, totalPages)
+            for (i in range) {
+                onProgress(i - range.first + 1, range.count())
+                pageMap[i] = vocabPageNum
 
                 val pageText = PdfTextExtractor.getTextFromPage(reader, i)
 
@@ -102,8 +135,8 @@ object VocabGenerator {
                     if (seen.contains(word)) continue
                     if (commonWords.contains(word)) continue
 
-                    // Look up definition (JSON dictionary has upper-case keys usually, or mixed)
-                    val defn = dictionary[word.uppercase()] ?: dictionary[word]
+                    // Look up definition with full variant and lemmatization support
+                    val defn = lookupDefinition(word)
                     if (!defn.isNullOrBlank()) {
                         seen.add(word)
                         validWords.add(word to defn)
@@ -174,6 +207,7 @@ object VocabGenerator {
                 androidDoc.writeTo(os)
             }
 
+            VocabResult(outputPdf, pageMap)
         } finally {
             androidDoc.close()
             reader?.close()
