@@ -2558,30 +2558,28 @@ fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean, pane: Pane, onPage: (I
 data class OnlineBook(
     val title: String,
     val author: String,
-    val downloadUrl: String,
-    val fileName: String,
-    val referer: String = "https://www.aliceandbooks.com/"
+    val textUrl: String,
+    val fileName: String
 )
 
 val onlineAuthorsAndBooks = listOf(
     "Fyodor Dostoevsky" to listOf(
-        OnlineBook("White Nights", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/717/2151", "White_Nights.pdf", "https://www.aliceandbooks.com/book/white-nights/fyodor-dostoevsky/717"),
-        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/715/2145", "Crime_and_Punishment.pdf", "https://www.aliceandbooks.com/book/crime-and-punishment/fyodor-dostoevsky/715"),
-        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/716/2148", "The_Brothers_Karamazov.pdf", "https://www.aliceandbooks.com/book/the-brothers-karamazov/fyodor-dostoevsky/716"),
-        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/718/2154", "Notes_from_Underground.pdf", "https://www.aliceandbooks.com/book/notes-from-underground/fyodor-dostoevsky/718"),
-        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/714/2144", "The_Idiot.pdf", "https://www.aliceandbooks.com/book/the-idiot/fyodor-dostoevsky/714")
+        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/2554/pg2554.txt", "Crime_and_Punishment.pdf"),
+        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/28054/pg28054.txt", "The_Brothers_Karamazov.pdf"),
+        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/600/pg600.txt", "Notes_from_Underground.pdf"),
+        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/2638/pg2638.txt", "The_Idiot.pdf"),
+        OnlineBook("White Nights and Other Stories", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/36034/pg36034.txt", "White_Nights.pdf")
     ),
     "Friedrich Nietzsche" to listOf(
-        OnlineBook("Thus Spoke Zarathustra", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/522/1562", "Thus_Spoke_Zarathustra.pdf", "https://www.aliceandbooks.com/book/thus-spake-zarathustra/friedrich-nietzsche/522"),
-        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/523/1565", "Beyond_Good_and_Evil.pdf", "https://www.aliceandbooks.com/book/beyond-good-and-evil/friedrich-nietzsche/523"),
-        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/524/1568", "The_Antichrist.pdf", "https://www.aliceandbooks.com/book/the-antichrist/friedrich-nietzsche/524")
+        OnlineBook("Thus Spoke Zarathustra", "Friedrich Nietzsche", "https://www.gutenberg.org/cache/epub/1998/pg1998.txt", "Thus_Spoke_Zarathustra.pdf"),
+        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.gutenberg.org/cache/epub/4363/pg4363.txt", "Beyond_Good_and_Evil.pdf"),
+        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.gutenberg.org/cache/epub/19322/pg19322.txt", "The_Antichrist.pdf")
     ),
     "William Wordsworth" to listOf(
-        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.aliceandbooks.com/book/download-link/812/2436", "Lyrical_Ballads.pdf", "https://www.aliceandbooks.com/book/lyrical-ballads/william-wordsworth/812")
+        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.gutenberg.org/cache/epub/9622/pg9622.txt", "Lyrical_Ballads.pdf")
     ),
     "Lord Byron" to listOf(
-        OnlineBook("Don Juan", "Lord Byron", "https://www.aliceandbooks.com/book/download-link/901/2673", "Don_Juan.pdf", "https://www.aliceandbooks.com/book/don-juan/lord-byron/901"),
-        OnlineBook("Manfred", "Lord Byron", "https://www.aliceandbooks.com/book/download-link/902/2675", "Manfred.pdf", "https://www.aliceandbooks.com/book/manfred/lord-byron/902")
+        OnlineBook("Don Juan", "Lord Byron", "https://www.gutenberg.org/cache/epub/21700/21700.txt", "Don_Juan.pdf")
     )
 )
 
@@ -2593,57 +2591,29 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
             if (!targetDir.exists()) targetDir.mkdirs()
 
             val destFile = File(targetDir, book.fileName)
-            if (destFile.exists() && destFile.length() > 5000) {
+            if (destFile.exists() && destFile.length() > 20000) {
                 withContext(Dispatchers.Main) {
                     onDone(destFile)
                 }
                 return@withContext
             }
 
-            var currentUrl = book.downloadUrl
-            var conn: java.net.HttpURLConnection? = null
-            var redirectCount = 0
+            val url = java.net.URL(book.textUrl)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            conn.connectTimeout = 15000
+            conn.readTimeout = 20000
+            conn.instanceFollowRedirects = true
 
-            while (redirectCount < 5) {
-                val url = java.net.URL(currentUrl)
-                conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                if (book.referer.isNotBlank()) {
-                    conn.setRequestProperty("Referer", book.referer)
+            if (conn.responseCode in 200..399) {
+                val rawText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                if (rawText.isBlank() || rawText.length < 500) {
+                    throw IOException("Failed to download text for ${book.title}")
                 }
-                conn.connectTimeout = 12000
-                conn.readTimeout = 20000
-                conn.instanceFollowRedirects = false
 
-                val responseCode = conn.responseCode
-                if (responseCode in 300..399) {
-                    val loc = conn.getHeaderField("Location")
-                    if (!loc.isNullOrBlank()) {
-                        currentUrl = if (loc.startsWith("http")) loc else "https://www.aliceandbooks.com$loc"
-                        redirectCount++
-                        conn.disconnect()
-                        continue
-                    }
-                }
-                break
-            }
+                convertTextToPdf(book.title, book.author, rawText, destFile)
 
-            val finalConn = conn ?: throw IOException("Could not establish connection")
-            if (finalConn.responseCode in 200..299) {
-                destFile.outputStream().use { output ->
-                    finalConn.inputStream.use { input ->
-                        val headerBuffer = ByteArray(10)
-                        val read = input.read(headerBuffer)
-                        val headerStr = String(headerBuffer, 0, read.coerceAtLeast(0), Charsets.US_ASCII)
-                        if (!headerStr.startsWith("%PDF-")) {
-                            destFile.delete()
-                            throw IOException("Downloaded file is not a valid PDF document.")
-                        }
-                        output.write(headerBuffer, 0, read)
-                        input.copyTo(output)
-                    }
-                }
                 android.media.MediaScannerConnection.scanFile(
                     ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
                 )
@@ -2651,7 +2621,7 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                     onDone(destFile)
                 }
             } else {
-                throw IOException("Server returned HTTP ${finalConn.responseCode}")
+                throw IOException("Server returned HTTP ${conn.responseCode}")
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
@@ -2659,6 +2629,51 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
             }
         }
     }
+}
+
+fun convertTextToPdf(title: String, author: String, text: String, outputFile: File) {
+    val document = com.itextpdf.text.Document(com.itextpdf.text.PageSize.A4, 36f, 36f, 36f, 36f)
+    val writer = com.itextpdf.text.pdf.PdfWriter.getInstance(document, outputFile.outputStream())
+    document.open()
+
+    val titleFont = com.itextpdf.text.FontFactory.getFont(com.itextpdf.text.FontFactory.HELVETICA_BOLD, 22f, com.itextpdf.text.BaseColor.BLACK)
+    val authorFont = com.itextpdf.text.FontFactory.getFont(com.itextpdf.text.FontFactory.HELVETICA_OBLIQUE, 14f, com.itextpdf.text.BaseColor.DARK_GRAY)
+    val bodyFont = com.itextpdf.text.FontFactory.getFont(com.itextpdf.text.FontFactory.HELVETICA, 10f, com.itextpdf.text.BaseColor.BLACK)
+
+    val pTitle = com.itextpdf.text.Paragraph(title, titleFont)
+    pTitle.alignment = com.itextpdf.text.Element.ALIGN_CENTER
+    pTitle.spacingAfter = 10f
+    document.add(pTitle)
+
+    val pAuthor = com.itextpdf.text.Paragraph("By $author", authorFont)
+    pAuthor.alignment = com.itextpdf.text.Element.ALIGN_CENTER
+    pAuthor.spacingAfter = 20f
+    document.add(pAuthor)
+
+    val cleanText = text.replace("\r\n", "\n")
+    val lines = cleanText.split("\n")
+
+    var paragraphText = StringBuilder()
+    for (line in lines) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) {
+            if (paragraphText.isNotEmpty()) {
+                val p = com.itextpdf.text.Paragraph(paragraphText.toString(), bodyFont)
+                p.spacingAfter = 6f
+                document.add(p)
+                paragraphText = StringBuilder()
+            }
+        } else {
+            if (paragraphText.isNotEmpty()) paragraphText.append(" ")
+            paragraphText.append(trimmed)
+        }
+    }
+    if (paragraphText.isNotEmpty()) {
+        val p = com.itextpdf.text.Paragraph(paragraphText.toString(), bodyFont)
+        document.add(p)
+    }
+
+    document.close()
 }
 
 @Composable
