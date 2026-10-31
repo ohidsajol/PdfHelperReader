@@ -1205,6 +1205,9 @@ fun ReaderScreen(reader: Reader) {
 
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showLobDialog by remember { mutableStateOf(false) }
+    var isDownloadingLob by remember { mutableStateOf(false) }
+    var downloadingBookTitle by remember { mutableStateOf("") }
 
     var splitMode by remember { mutableStateOf(SplitMode.SPLIT_BOTH) }
     var showOcrConfirmDialog by remember { mutableStateOf(false) }
@@ -1491,6 +1494,100 @@ fun ReaderScreen(reader: Reader) {
             )
         }
 
+        if (showLobDialog) {
+            AlertDialog(
+                onDismissRequest = { if (!isDownloadingLob) showLobDialog = false },
+                title = { Text("Online Books (Alice & Books)") },
+                text = {
+                    Column {
+                        if (isDownloadingLob) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator()
+                                Text(
+                                    text = downloadingBookTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Downloading PDF to Downloads/PdfHelperReader_files...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                onlineAuthorsAndBooks.forEach { (authorName, books) ->
+                                    item {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = MaterialTheme.shapes.small,
+                                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = authorName,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                    }
+                                    items(books) { book ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    isDownloadingLob = true
+                                                    downloadingBookTitle = book.title
+                                                    scope.launch {
+                                                        downloadOnlineBook(
+                                                            ctx = ctx,
+                                                            book = book,
+                                                            onDone = { file ->
+                                                                isDownloadingLob = false
+                                                                showLobDialog = false
+                                                                reader.onBookPicked(Uri.fromFile(file))
+                                                                Toast.makeText(ctx, "${book.title} loaded!", Toast.LENGTH_SHORT).show()
+                                                            },
+                                                            onError = { err ->
+                                                                isDownloadingLob = false
+                                                                Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(book.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                                Text(book.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                            }
+                                            Text("Download ➔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { showLobDialog = false },
+                        enabled = !isDownloadingLob
+                    ) { Text("Close") }
+                }
+            )
+        }
+
         if (showHistory) {
             AlertDialog(
                 onDismissRequest = { showHistory = false },
@@ -1771,6 +1868,8 @@ fun ReaderScreen(reader: Reader) {
                     if (reader.book.doc != null) {
                         TextButton(onClick = { showOcrConfirmDialog = true }, contentPadding = pad) { Text("O") }
                     }
+
+                    TextButton(onClick = { showLobDialog = true }, contentPadding = pad) { Text("LOB") }
 
                     Spacer(modifier = Modifier.width(8.dp))
 
@@ -2452,6 +2551,85 @@ fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean, pane: Pane, onPage: (I
         error?.let {
             Text(it, color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp))
+        }
+    }
+}
+
+data class OnlineBook(
+    val title: String,
+    val author: String,
+    val downloadUrl: String,
+    val fileName: String
+)
+
+val onlineAuthorsAndBooks = listOf(
+    "Fyodor Dostoevsky" to listOf(
+        OnlineBook("White Nights", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/717/2151", "White_Nights.pdf"),
+        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/2554/2554-pdf.pdf", "Crime_and_Punishment.pdf"),
+        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/28054/28054-pdf.pdf", "The_Brothers_Karamazov.pdf"),
+        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/600/600-pdf.pdf", "Notes_from_Underground.pdf"),
+        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/2638/2638-pdf.pdf", "The_Idiot.pdf")
+    ),
+    "Friedrich Nietzsche" to listOf(
+        OnlineBook("Thus Spoke Zarathustra", "Friedrich Nietzsche", "https://www.gutenberg.org/files/1998/1998-pdf.pdf", "Thus_Spoke_Zarathustra.pdf"),
+        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.gutenberg.org/files/4363/4363-pdf.pdf", "Beyond_Good_and_Evil.pdf"),
+        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.gutenberg.org/files/19322/19322-pdf.pdf", "The_Antichrist.pdf"),
+        OnlineBook("The Genealogy of Morals", "Friedrich Nietzsche", "https://www.gutenberg.org/files/52319/52319-pdf.pdf", "The_Genealogy_of_Morals.pdf")
+    ),
+    "William Wordsworth" to listOf(
+        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.gutenberg.org/files/9622/9622-pdf.pdf", "Lyrical_Ballads.pdf"),
+        OnlineBook("The Prelude", "William Wordsworth", "https://www.gutenberg.org/files/12383/12383-pdf.pdf", "The_Prelude.pdf"),
+        OnlineBook("Poems, Volume 1", "William Wordsworth", "https://www.gutenberg.org/files/4765/4765-pdf.pdf", "Wordsworth_Poems_Vol1.pdf")
+    ),
+    "Lord Byron" to listOf(
+        OnlineBook("Don Juan", "Lord Byron", "https://www.gutenberg.org/files/21700/21700-pdf.pdf", "Don_Juan.pdf"),
+        OnlineBook("Childe Harold's Pilgrimage", "Lord Byron", "https://www.gutenberg.org/files/5131/5131-pdf.pdf", "Childe_Harolds_Pilgrimage.pdf"),
+        OnlineBook("Manfred", "Lord Byron", "https://www.gutenberg.org/files/21803/21803-pdf.pdf", "Manfred.pdf")
+    )
+)
+
+suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
+    withContext(Dispatchers.IO) {
+        try {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val targetDir = File(downloadsDir, "PdfHelperReader_files")
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            val destFile = File(targetDir, book.fileName)
+            if (destFile.exists() && destFile.length() > 5000) {
+                withContext(Dispatchers.Main) {
+                    onDone(destFile)
+                }
+                return@withContext
+            }
+
+            val url = java.net.URL(book.downloadUrl)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.instanceFollowRedirects = true
+
+            if (conn.responseCode in 200..399) {
+                conn.inputStream.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                android.media.MediaScannerConnection.scanFile(
+                    ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                )
+                withContext(Dispatchers.Main) {
+                    onDone(destFile)
+                }
+            } else {
+                throw IOException("Server returned HTTP ${conn.responseCode}")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onError(e)
+            }
         }
     }
 }
