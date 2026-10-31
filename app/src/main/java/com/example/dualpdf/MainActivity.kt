@@ -639,14 +639,15 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v2", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v3", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
+                if (destFile.exists()) destFile.delete()
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v2", true) }
+                editPrefs { putBoolean("default_book_extracted_v3", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
