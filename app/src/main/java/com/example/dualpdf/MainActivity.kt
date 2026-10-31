@@ -2559,32 +2559,29 @@ data class OnlineBook(
     val title: String,
     val author: String,
     val downloadUrl: String,
-    val fileName: String
+    val fileName: String,
+    val referer: String = "https://www.aliceandbooks.com/"
 )
 
 val onlineAuthorsAndBooks = listOf(
     "Fyodor Dostoevsky" to listOf(
-        OnlineBook("White Nights", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/717/2151", "White_Nights.pdf"),
-        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/2554/2554-pdf.pdf", "Crime_and_Punishment.pdf"),
-        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/28054/28054-pdf.pdf", "The_Brothers_Karamazov.pdf"),
-        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/600/600-pdf.pdf", "Notes_from_Underground.pdf"),
-        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.gutenberg.org/files/2638/2638-pdf.pdf", "The_Idiot.pdf")
+        OnlineBook("White Nights", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/717/2151", "White_Nights.pdf", "https://www.aliceandbooks.com/book/white-nights/fyodor-dostoevsky/717"),
+        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/715/2145", "Crime_and_Punishment.pdf", "https://www.aliceandbooks.com/book/crime-and-punishment/fyodor-dostoevsky/715"),
+        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/716/2148", "The_Brothers_Karamazov.pdf", "https://www.aliceandbooks.com/book/the-brothers-karamazov/fyodor-dostoevsky/716"),
+        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/718/2154", "Notes_from_Underground.pdf", "https://www.aliceandbooks.com/book/notes-from-underground/fyodor-dostoevsky/718"),
+        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/714/2144", "The_Idiot.pdf", "https://www.aliceandbooks.com/book/the-idiot/fyodor-dostoevsky/714")
     ),
     "Friedrich Nietzsche" to listOf(
-        OnlineBook("Thus Spoke Zarathustra", "Friedrich Nietzsche", "https://www.gutenberg.org/files/1998/1998-pdf.pdf", "Thus_Spoke_Zarathustra.pdf"),
-        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.gutenberg.org/files/4363/4363-pdf.pdf", "Beyond_Good_and_Evil.pdf"),
-        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.gutenberg.org/files/19322/19322-pdf.pdf", "The_Antichrist.pdf"),
-        OnlineBook("The Genealogy of Morals", "Friedrich Nietzsche", "https://www.gutenberg.org/files/52319/52319-pdf.pdf", "The_Genealogy_of_Morals.pdf")
+        OnlineBook("Thus Spoke Zarathustra", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/522/1562", "Thus_Spoke_Zarathustra.pdf", "https://www.aliceandbooks.com/book/thus-spake-zarathustra/friedrich-nietzsche/522"),
+        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/523/1565", "Beyond_Good_and_Evil.pdf", "https://www.aliceandbooks.com/book/beyond-good-and-evil/friedrich-nietzsche/523"),
+        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/524/1568", "The_Antichrist.pdf", "https://www.aliceandbooks.com/book/the-antichrist/friedrich-nietzsche/524")
     ),
     "William Wordsworth" to listOf(
-        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.gutenberg.org/files/9622/9622-pdf.pdf", "Lyrical_Ballads.pdf"),
-        OnlineBook("The Prelude", "William Wordsworth", "https://www.gutenberg.org/files/12383/12383-pdf.pdf", "The_Prelude.pdf"),
-        OnlineBook("Poems, Volume 1", "William Wordsworth", "https://www.gutenberg.org/files/4765/4765-pdf.pdf", "Wordsworth_Poems_Vol1.pdf")
+        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.aliceandbooks.com/book/download-link/812/2436", "Lyrical_Ballads.pdf", "https://www.aliceandbooks.com/book/lyrical-ballads/william-wordsworth/812")
     ),
     "Lord Byron" to listOf(
-        OnlineBook("Don Juan", "Lord Byron", "https://www.gutenberg.org/files/21700/21700-pdf.pdf", "Don_Juan.pdf"),
-        OnlineBook("Childe Harold's Pilgrimage", "Lord Byron", "https://www.gutenberg.org/files/5131/5131-pdf.pdf", "Childe_Harolds_Pilgrimage.pdf"),
-        OnlineBook("Manfred", "Lord Byron", "https://www.gutenberg.org/files/21803/21803-pdf.pdf", "Manfred.pdf")
+        OnlineBook("Don Juan", "Lord Byron", "https://www.aliceandbooks.com/book/download-link/901/2673", "Don_Juan.pdf", "https://www.aliceandbooks.com/book/don-juan/lord-byron/901"),
+        OnlineBook("Manfred", "Lord Byron", "https://www.aliceandbooks.com/book/download-link/902/2675", "Manfred.pdf", "https://www.aliceandbooks.com/book/manfred/lord-byron/902")
     )
 )
 
@@ -2603,17 +2600,47 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                 return@withContext
             }
 
-            val url = java.net.URL(book.downloadUrl)
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            conn.connectTimeout = 10000
-            conn.readTimeout = 15000
-            conn.instanceFollowRedirects = true
+            var currentUrl = book.downloadUrl
+            var conn: java.net.HttpURLConnection? = null
+            var redirectCount = 0
 
-            if (conn.responseCode in 200..399) {
-                conn.inputStream.use { input ->
-                    destFile.outputStream().use { output ->
+            while (redirectCount < 5) {
+                val url = java.net.URL(currentUrl)
+                conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                if (book.referer.isNotBlank()) {
+                    conn.setRequestProperty("Referer", book.referer)
+                }
+                conn.connectTimeout = 12000
+                conn.readTimeout = 20000
+                conn.instanceFollowRedirects = false
+
+                val responseCode = conn.responseCode
+                if (responseCode in 300..399) {
+                    val loc = conn.getHeaderField("Location")
+                    if (!loc.isNullOrBlank()) {
+                        currentUrl = if (loc.startsWith("http")) loc else "https://www.aliceandbooks.com$loc"
+                        redirectCount++
+                        conn.disconnect()
+                        continue
+                    }
+                }
+                break
+            }
+
+            val finalConn = conn ?: throw IOException("Could not establish connection")
+            if (finalConn.responseCode in 200..299) {
+                destFile.outputStream().use { output ->
+                    finalConn.inputStream.use { input ->
+                        val headerBuffer = ByteArray(10)
+                        val read = input.read(headerBuffer)
+                        val headerStr = String(headerBuffer, 0, read.coerceAtLeast(0), Charsets.US_ASCII)
+                        if (!headerStr.startsWith("%PDF-")) {
+                            destFile.delete()
+                            throw IOException("Downloaded file is not a valid PDF document.")
+                        }
+                        output.write(headerBuffer, 0, read)
                         input.copyTo(output)
                     }
                 }
@@ -2624,7 +2651,7 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                     onDone(destFile)
                 }
             } else {
-                throw IOException("Server returned HTTP ${conn.responseCode}")
+                throw IOException("Server returned HTTP ${finalConn.responseCode}")
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
