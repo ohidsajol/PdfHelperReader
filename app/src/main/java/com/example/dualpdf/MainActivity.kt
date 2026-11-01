@@ -247,7 +247,7 @@ class PdfDoc private constructor(
 
                 val rawName = Sidecar.displayName(ctx, uri) ?: uri.lastPathSegment ?: "epub_book.epub"
                 val cleanBase = rawName.removePrefix(".").replace(Regex("\\.epub$", RegexOption.IGNORE_CASE), "")
-                val epubConvertedFile = File(targetDir, "$cleanBase.pdf")
+                val epubConvertedFile = File(targetDir, "epub_$cleanBase.pdf")
 
                 if (!epubConvertedFile.exists() || epubConvertedFile.length() < 1000) {
                     EpubParser.convertEpubToPdf(epubBook, epubConvertedFile)
@@ -520,6 +520,49 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         // Remove stale temp copies from earlier runs.
         ctx.cacheDir.listFiles { f -> f.name.startsWith("pdf_") }?.forEach { it.delete() }
         isDarkMode = getBoolPref("is_dark_mode", false)
+        cleanStorageDirectoryIfExceedsLimit()
+    }
+
+    fun cleanStorageDirectoryIfExceedsLimit(maxSizeBytes: Long = 500L * 1024L * 1024L) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val targetDir = File(downloadsDir, "PdfHelperReader_files")
+                if (!targetDir.exists() || !targetDir.isDirectory) return@launch
+
+                val allFiles = targetDir.listFiles()?.toList() ?: return@launch
+                var totalSize = allFiles.sumOf { it.length() }
+
+                if (totalSize <= maxSizeBytes) return@launch
+
+                val vocabFiles = allFiles.filter { f ->
+                    val name = f.name.lowercase()
+                    name.contains("_vocab.pdf")
+                }.sortedBy { it.lastModified() }
+
+                val convertedFiles = allFiles.filter { f ->
+                    val name = f.name.lowercase()
+                    !vocabFiles.contains(f) && (name.startsWith("epub_") || name.startsWith(".epub_"))
+                }.sortedBy { it.lastModified() }
+
+                val downloadedFiles = allFiles.filter { f ->
+                    !vocabFiles.contains(f) && !convertedFiles.contains(f) && f.name != ".PdfHelperReader_state.json"
+                }.sortedBy { it.lastModified() }
+
+                for (fileGroup in listOf(vocabFiles, convertedFiles, downloadedFiles)) {
+                    for (file in fileGroup) {
+                        if (totalSize <= maxSizeBytes) break
+                        val fSize = file.length()
+                        if (file.exists() && file.delete()) {
+                            totalSize -= fSize
+                        }
+                    }
+                    if (totalSize <= maxSizeBytes) break
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     private suspend fun computeHash(ctx: Context, uri: Uri): String = withContext(Dispatchers.IO) {
@@ -705,6 +748,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     fun syncFromDiskAndRestore() {
+        cleanStorageDirectoryIfExceedsLimit()
         syncFromDisk()
         isDarkMode = getBoolPref("is_dark_mode", false)
         loadBookmarks()
