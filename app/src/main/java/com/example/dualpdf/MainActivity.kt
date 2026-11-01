@@ -1497,6 +1497,10 @@ fun ReaderScreen(reader: Reader) {
     var ocrProgressCurrent by remember { mutableIntStateOf(0) }
     var ocrProgressTotal by remember { mutableIntStateOf(0) }
 
+    var isAppUpdating by remember { mutableStateOf(false) }
+    var updateProgressCurrent by remember { mutableIntStateOf(0) }
+    var updateProgressTotal by remember { mutableIntStateOf(0) }
+
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showLobDialog by remember { mutableStateOf(false) }
@@ -1994,6 +1998,34 @@ fun ReaderScreen(reader: Reader) {
             )
         }
 
+        if (isAppUpdating) {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("App Update") },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator()
+                        Text("Downloading latest release update from GitHub...", style = MaterialTheme.typography.bodyMedium)
+                        if (updateProgressTotal > 0) {
+                            val pct = ((updateProgressCurrent.toFloat() / updateProgressTotal.toFloat()) * 100).toInt()
+                            val downloadedMb = String.format(java.util.Locale.US, "%.1f", updateProgressCurrent / (1024f * 1024f))
+                            val totalMb = String.format(java.util.Locale.US, "%.1f", updateProgressTotal / (1024f * 1024f))
+                            Text("Progress: $pct% ($downloadedMb MB / $totalMb MB)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            LinearProgressIndicator(
+                                progress = { updateProgressCurrent.toFloat() / updateProgressTotal.toFloat() },
+                                modifier = Modifier.fillMaxWidth().height(8.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {}
+            )
+        }
+
         if (showHistory) {
             AlertDialog(
                 onDismissRequest = { showHistory = false },
@@ -2306,6 +2338,37 @@ fun ReaderScreen(reader: Reader) {
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.height(28.dp)
                     ) { Text("LV") }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    Button(
+                        onClick = {
+                            if (isAppUpdating) return@Button
+                            isAppUpdating = true
+                            updateProgressCurrent = 0
+                            updateProgressTotal = 0
+                            scope.launch {
+                                checkAndDownloadAppUpdate(
+                                    ctx = ctx,
+                                    onProgress = { current, total ->
+                                        updateProgressCurrent = current
+                                        updateProgressTotal = total
+                                    },
+                                    onDone = { apkFile ->
+                                        isAppUpdating = false
+                                        installApk(ctx, apkFile)
+                                    },
+                                    onError = { err ->
+                                        isAppUpdating = false
+                                        Toast.makeText(ctx, "Update error: ${err.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.height(28.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                    ) { Text("Update") }
                 }
                 HorizontalDivider()
 
@@ -3074,6 +3137,130 @@ suspend fun fetchGutenbergBooks(query: String? = null): List<GutenbergBookItem> 
         }
     } catch (e: Exception) {
         emptyList()
+    }
+}
+
+suspend fun checkAndDownloadAppUpdate(
+    ctx: Context,
+    onProgress: (Int, Int) -> Unit,
+    onDone: (File) -> Unit,
+    onError: (Exception) -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            val githubApiUrl = "https://api.github.com/repos/ohidsajol/PdfHelperReader/releases/latest"
+            val url = java.net.URL(githubApiUrl)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            conn.connectTimeout = 10000
+            conn.readTimeout = 12000
+
+            if (conn.responseCode in 200..399) {
+                val jsonStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val root = Gson().fromJson(jsonStr, com.google.gson.JsonObject::class.java)
+                val assets = root.getAsJsonArray("assets")
+                var apkDownloadUrl: String? = null
+
+                if (assets != null) {
+                    for (elem in assets) {
+                        val obj = elem.asJsonObject
+                        val assetName = obj.get("name")?.asString ?: ""
+                        if (assetName.lowercase().endsWith(".apk")) {
+                            apkDownloadUrl = obj.get("browser_download_url")?.asString
+                            break
+                        }
+                    }
+                }
+
+                if (apkDownloadUrl.isNullOrBlank()) {
+                    throw IOException("Could not find release APK on GitHub.")
+                }
+
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val targetDir = File(downloadsDir, "PdfHelperReader_files")
+                if (!targetDir.exists()) targetDir.mkdirs()
+
+                val updateApkFile = File(targetDir, "PdfHelperReader_update.apk")
+                if (updateApkFile.exists()) updateApkFile.delete()
+
+                val apkUrl = java.net.URL(apkDownloadUrl)
+                val apkConn = apkUrl.openConnection() as java.net.HttpURLConnection
+                apkConn.requestMethod = "GET"
+                apkConn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                apkConn.connectTimeout = 12000
+                apkConn.readTimeout = 20000
+                apkConn.instanceFollowRedirects = true
+
+                if (apkConn.responseCode in 200..399) {
+                    val totalBytes = apkConn.contentLength
+                    var downloadedBytes = 0
+
+                    updateApkFile.outputStream().use { output ->
+                        apkConn.inputStream.use { input ->
+                            val buffer = ByteArray(8192)
+                            var read = input.read(buffer)
+                            while (read != -1) {
+                                output.write(buffer, 0, read)
+                                downloadedBytes += read
+                                withContext(Dispatchers.Main) {
+                                    onProgress(downloadedBytes, totalBytes)
+                                }
+                                read = input.read(buffer)
+                            }
+                        }
+                    }
+
+                    android.media.MediaScannerConnection.scanFile(
+                        ctx, arrayOf(updateApkFile.absolutePath), arrayOf("application/vnd.android.package-archive"), null
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        onDone(updateApkFile)
+                    }
+                } else {
+                    throw IOException("Server returned HTTP ${apkConn.responseCode}")
+                }
+            } else {
+                throw IOException("GitHub API returned HTTP ${conn.responseCode}")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onError(e)
+            }
+        }
+    }
+}
+
+fun installApk(ctx: Context, apkFile: File) {
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!ctx.packageManager.canRequestPackageInstalls()) {
+                val intent = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${ctx.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                ctx.startActivity(intent)
+                Toast.makeText(ctx, "Please allow unknown app installs, then tap Update again.", Toast.LENGTH_LONG).show()
+                return
+            }
+        }
+
+        val apkUri = androidx.core.content.FileProvider.getUriForFile(
+            ctx,
+            "${ctx.packageName}.fileprovider",
+            apkFile
+        )
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        ctx.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(ctx, "Install error: ${e.message}", Toast.LENGTH_LONG).show()
     }
 }
 
