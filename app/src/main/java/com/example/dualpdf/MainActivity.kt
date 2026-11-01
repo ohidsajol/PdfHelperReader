@@ -1265,6 +1265,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         reader.syncFromDiskAndRestore()
+
+        val pending = pendingApkToInstall
+        if (pending != null && pending.exists()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+                installApk(this, pending)
+            }
+        }
     }
 
     private fun checkPermissions() {
@@ -3320,10 +3327,7 @@ suspend fun downloadAppUpdateApk(
 ) {
     withContext(Dispatchers.IO) {
         try {
-            val updateDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.cacheDir
-            if (!updateDir.exists()) updateDir.mkdirs()
-
-            val updateApkFile = File(updateDir, "PdfHelperReader_update.apk")
+            val updateApkFile = File(ctx.cacheDir, "PdfHelperReader_update.apk")
             if (updateApkFile.exists()) updateApkFile.delete()
 
             val apkUrl = java.net.URL(downloadUrl)
@@ -3353,10 +3357,6 @@ suspend fun downloadAppUpdateApk(
                     }
                 }
 
-                android.media.MediaScannerConnection.scanFile(
-                    ctx, arrayOf(updateApkFile.absolutePath), arrayOf("application/vnd.android.package-archive"), null
-                )
-
                 withContext(Dispatchers.Main) {
                     onDone(updateApkFile)
                 }
@@ -3371,6 +3371,8 @@ suspend fun downloadAppUpdateApk(
     }
 }
 
+var pendingApkToInstall: File? = null
+
 fun installApk(ctx: Context, apkFile: File) {
     try {
         if (!apkFile.exists() || apkFile.length() < 1000) {
@@ -3380,19 +3382,22 @@ fun installApk(ctx: Context, apkFile: File) {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!ctx.packageManager.canRequestPackageInstalls()) {
+                pendingApkToInstall = apkFile
                 val intent = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                     data = Uri.parse("package:${ctx.packageName}")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 ctx.startActivity(intent)
-                Toast.makeText(ctx, "Please allow unknown app installs, then tap Update again.", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "Please allow unknown app installs, then return to the app.", Toast.LENGTH_LONG).show()
                 return
             }
         }
 
+        pendingApkToInstall = null
+
         val apkUri = androidx.core.content.FileProvider.getUriForFile(
             ctx,
-            "com.example.pdfhelperreader.fileprovider",
+            "${ctx.packageName}.fileprovider",
             apkFile
         )
 
