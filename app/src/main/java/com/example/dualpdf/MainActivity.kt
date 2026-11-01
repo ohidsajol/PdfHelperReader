@@ -1770,6 +1770,7 @@ fun ReaderScreen(reader: Reader) {
             var gutenbergSearchQuery by remember { mutableStateOf("") }
             var gutenbergResults by remember { mutableStateOf<List<GutenbergBookItem>>(emptyList()) }
             var isSearchingGutenberg by remember { mutableStateOf(false) }
+            var downloadingGutenbergId by remember { mutableStateOf<Int?>(null) }
 
             LaunchedEffect(lobTabSource, gutenbergSearchQuery) {
                 if (lobTabSource == 1) {
@@ -1781,7 +1782,7 @@ fun ReaderScreen(reader: Reader) {
             }
 
             AlertDialog(
-                onDismissRequest = { if (!isDownloadingLob) showLobDialog = false },
+                onDismissRequest = { if (!isDownloadingLob && downloadingGutenbergId == null) showLobDialog = false },
                 title = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1802,78 +1803,79 @@ fun ReaderScreen(reader: Reader) {
                 },
                 text = {
                     Column {
-                        if (isDownloadingLob) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                CircularProgressIndicator()
-                                Text(
-                                    text = downloadingBookTitle,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Downloading to Downloads/PdfHelperReader_files...",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else if (lobTabSource == 0) {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                catalog.forEach { group ->
-                                    item {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.primaryContainer,
-                                            shape = MaterialTheme.shapes.small,
-                                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = group.author,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                            )
-                                        }
-                                    }
-                                    items(group.books) { book ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    isDownloadingLob = true
-                                                    downloadingBookTitle = book.title
-                                                    scope.launch {
-                                                        downloadOnlineBook(
-                                                            ctx = ctx,
-                                                            book = book,
-                                                            onDone = { file ->
-                                                                isDownloadingLob = false
-                                                                showLobDialog = false
-                                                                reader.onBookPicked(Uri.fromFile(file))
-                                                                Toast.makeText(ctx, "${book.title} loaded!", Toast.LENGTH_SHORT).show()
-                                                            },
-                                                            onError = { err ->
-                                                                isDownloadingLob = false
-                                                                Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(book.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                                                Text(group.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        if (lobTabSource == 0) {
+                            if (isDownloadingLob) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CircularProgressIndicator()
+                                    Text(
+                                        text = downloadingBookTitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Downloading to Downloads/PdfHelperReader_files...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    catalog.forEach { group ->
+                                        item {
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                shape = MaterialTheme.shapes.small,
+                                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = group.author,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                                )
                                             }
-                                            Text("Download ➔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                        }
+                                        items(group.books) { book ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        isDownloadingLob = true
+                                                        downloadingBookTitle = book.title
+                                                        scope.launch {
+                                                            downloadOnlineBook(
+                                                                ctx = ctx,
+                                                                book = book,
+                                                                onDone = { file ->
+                                                                    isDownloadingLob = false
+                                                                    reader.onBookPicked(Uri.fromFile(file))
+                                                                    Toast.makeText(ctx, "${book.title} loaded!", Toast.LENGTH_SHORT).show()
+                                                                },
+                                                                onError = { err ->
+                                                                    isDownloadingLob = false
+                                                                    Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(book.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                                    Text(group.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                                }
+                                                Text("Download ➔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                            }
                                         }
                                     }
                                 }
@@ -1926,49 +1928,52 @@ fun ReaderScreen(reader: Reader) {
                                                     Text(b.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                                     Text(b.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 }
-                                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                    FilledTonalButton(
-                                                        onClick = {
-                                                            isDownloadingLob = true
-                                                            downloadingBookTitle = "${b.title} (EPUB)"
-                                                            scope.launch {
-                                                                downloadGutenbergBook(ctx, b, isEpub = true, onDone = { file ->
-                                                                    isDownloadingLob = false
-                                                                    showLobDialog = false
-                                                                    reader.onBookPicked(Uri.fromFile(file))
-                                                                    Toast.makeText(ctx, "${b.title} loaded!", Toast.LENGTH_SHORT).show()
-                                                                }, onError = { err ->
-                                                                    isDownloadingLob = false
-                                                                    Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
-                                                                })
-                                                            }
-                                                        },
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                        modifier = Modifier.height(28.dp)
-                                                    ) {
-                                                        Text("EPUB", style = MaterialTheme.typography.labelSmall)
-                                                    }
+                                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    if (downloadingGutenbergId == b.id) {
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(24.dp).padding(2.dp),
+                                                            strokeWidth = 2.dp
+                                                        )
+                                                    } else {
+                                                        FilledTonalButton(
+                                                            onClick = {
+                                                                downloadingGutenbergId = b.id
+                                                                scope.launch {
+                                                                    downloadGutenbergBook(ctx, b, isEpub = true, onDone = { file ->
+                                                                        downloadingGutenbergId = null
+                                                                        reader.onBookPicked(Uri.fromFile(file))
+                                                                        Toast.makeText(ctx, "${b.title} loaded!", Toast.LENGTH_SHORT).show()
+                                                                    }, onError = { err ->
+                                                                        downloadingGutenbergId = null
+                                                                        Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                                                    })
+                                                                }
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                            modifier = Modifier.height(28.dp)
+                                                        ) {
+                                                            Text("EPUB", style = MaterialTheme.typography.labelSmall)
+                                                        }
 
-                                                    Button(
-                                                        onClick = {
-                                                            isDownloadingLob = true
-                                                            downloadingBookTitle = "${b.title} (PDF)"
-                                                            scope.launch {
-                                                                downloadGutenbergBook(ctx, b, isEpub = false, onDone = { file ->
-                                                                    isDownloadingLob = false
-                                                                    showLobDialog = false
-                                                                    reader.onBookPicked(Uri.fromFile(file))
-                                                                    Toast.makeText(ctx, "${b.title} loaded!", Toast.LENGTH_SHORT).show()
-                                                                }, onError = { err ->
-                                                                    isDownloadingLob = false
-                                                                    Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
-                                                                })
-                                                            }
-                                                        },
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                                        modifier = Modifier.height(28.dp)
-                                                    ) {
-                                                        Text("PDF", style = MaterialTheme.typography.labelSmall)
+                                                        Button(
+                                                            onClick = {
+                                                                downloadingGutenbergId = b.id
+                                                                scope.launch {
+                                                                    downloadGutenbergBook(ctx, b, isEpub = false, onDone = { file ->
+                                                                        downloadingGutenbergId = null
+                                                                        reader.onBookPicked(Uri.fromFile(file))
+                                                                        Toast.makeText(ctx, "${b.title} loaded!", Toast.LENGTH_SHORT).show()
+                                                                    }, onError = { err ->
+                                                                        downloadingGutenbergId = null
+                                                                        Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                                                    })
+                                                                }
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                            modifier = Modifier.height(28.dp)
+                                                        ) {
+                                                            Text("PDF", style = MaterialTheme.typography.labelSmall)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1982,7 +1987,7 @@ fun ReaderScreen(reader: Reader) {
                 confirmButton = {
                     TextButton(
                         onClick = { showLobDialog = false },
-                        enabled = !isDownloadingLob
+                        enabled = !isDownloadingLob && downloadingGutenbergId == null
                     ) { Text("Close") }
                 }
             )
