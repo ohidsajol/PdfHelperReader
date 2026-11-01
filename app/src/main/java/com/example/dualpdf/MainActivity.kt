@@ -90,6 +90,7 @@ class PdfDoc private constructor(
     private val pfd: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
     private val tempFile: File?,          // non-null when we had to copy a non-seekable stream
+    val convertedFile: File? = null
 ) {
     val pageCount: Int = renderer.pageCount
     private val renderDispatcher = Dispatchers.IO.limitedParallelism(1)
@@ -255,7 +256,7 @@ class PdfDoc private constructor(
                     )
                 }
                 val pfd = ParcelFileDescriptor.open(epubConvertedFile, ParcelFileDescriptor.MODE_READ_ONLY)
-                val doc = PdfDoc(pfd, PdfRenderer(pfd), null)
+                val doc = PdfDoc(pfd, PdfRenderer(pfd), null, epubConvertedFile)
                 CoroutineScope(Dispatchers.IO).launch {
                     doc.startRatioCompute()
                 }
@@ -956,19 +957,27 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         onDone: (VocabResult) -> Unit,
         onError: (Exception) -> Unit
     ) {
-        val uri = bookUri ?: return
+        val activeDoc = book.doc ?: return
         val oldJob = vocabJob
         vocabJob = scope.launch(Dispatchers.IO) {
             oldJob?.cancel()
             oldJob?.join()
             try {
                 val inputPdf = File.createTempFile("book_in", ".pdf", ctx.cacheDir)
-                ctx.contentResolver.openInputStream(uri)?.use { i ->
-                    inputPdf.outputStream().use { o -> i.copyTo(o) }
+                val sourceFile = activeDoc.convertedFile
+                if (sourceFile != null && sourceFile.exists()) {
+                    sourceFile.inputStream().use { i ->
+                        inputPdf.outputStream().use { o -> i.copyTo(o) }
+                    }
+                } else {
+                    val uri = bookUri ?: return@launch
+                    ctx.contentResolver.openInputStream(uri)?.use { i ->
+                        inputPdf.outputStream().use { o -> i.copyTo(o) }
+                    }
                 }
-                
+
                 val outputPdf = File(ctx.cacheDir, "vocab_output_${System.currentTimeMillis()}.pdf")
-                
+
                 val result = VocabGenerator.generate(ctx, inputPdf, outputPdf, pageRange) { current, total ->
                     if (coroutineContext.isActive) {
                         scope.launch(Dispatchers.Main) {
@@ -976,7 +985,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                         }
                     }
                 }
-                
+
                 inputPdf.delete()
                 if (coroutineContext.isActive) {
                     withContext(Dispatchers.Main) {
@@ -999,15 +1008,23 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     fun generateOcr(onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
-        val uri = bookUri ?: return
+        val activeDoc = book.doc ?: return
         ocrJob?.cancel()
         ocrJob = scope.launch(Dispatchers.IO) {
             try {
                 val inputPdf = File.createTempFile("book_in", ".pdf", ctx.cacheDir)
-                ctx.contentResolver.openInputStream(uri)?.use { i ->
-                    inputPdf.outputStream().use { o -> i.copyTo(o) }
+                val sourceFile = activeDoc.convertedFile
+                if (sourceFile != null && sourceFile.exists()) {
+                    sourceFile.inputStream().use { i ->
+                        inputPdf.outputStream().use { o -> i.copyTo(o) }
+                    }
+                } else {
+                    val uri = bookUri ?: return@launch
+                    ctx.contentResolver.openInputStream(uri)?.use { i ->
+                        inputPdf.outputStream().use { o -> i.copyTo(o) }
+                    }
                 }
-                
+
                 val outputPdf = File(ctx.cacheDir, "ocr_output.pdf")
                 
                 OcrProcessor.processPdf(ctx, inputPdf, outputPdf) { current, total ->
