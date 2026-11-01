@@ -2616,19 +2616,51 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
             if (!targetDir.exists()) targetDir.mkdirs()
 
             val destFile = File(targetDir, book.fileName)
-            if (destFile.exists() && destFile.length() > 20000) {
+
+            // Tier 1: Check if already present on disk
+            if (destFile.exists() && destFile.length() > 5000) {
                 withContext(Dispatchers.Main) {
                     onDone(destFile)
                 }
                 return@withContext
             }
 
-            val pattern = java.util.regex.Pattern.compile("/download-link/(\\d+)/(\\d+)")
-            val matcher = pattern.matcher(book.downloadUrl)
+            // Tier 2: Unpack directly from APK assets/online_books/ if present
+            val assetPath = "online_books/${book.fileName}"
+            val assetExists = runCatching {
+                ctx.assets.open(assetPath).use { it.read() }
+            }.isSuccess
+
+            if (assetExists) {
+                try {
+                    ctx.assets.open(assetPath).use { input ->
+                        destFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    if (destFile.exists() && destFile.length() > 5000) {
+                        android.media.MediaScannerConnection.scanFile(
+                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                        )
+                        withContext(Dispatchers.Main) {
+                            onDone(destFile)
+                        }
+                        return@withContext
+                    }
+                } catch (e: Exception) {
+                    destFile.delete()
+                }
+            }
+
+            // Tier 3: Download from GitHub raw CDN repository or Alice & Books candidates
+            val githubRawUrl = "https://raw.githubusercontent.com/ohidsajol/PdfHelperReader/master/app/src/main/assets/online_books/${book.fileName}"
 
             val candidates = mutableListOf<String>()
+            candidates.add(githubRawUrl)
             candidates.add(book.downloadUrl)
 
+            val pattern = java.util.regex.Pattern.compile("/download-link/(\\d+)/(\\d+)")
+            val matcher = pattern.matcher(book.downloadUrl)
             if (matcher.find()) {
                 val bookId = matcher.group(1)?.toIntOrNull() ?: 0
                 val initialLinkId = matcher.group(2)?.toIntOrNull() ?: 0
@@ -2688,7 +2720,7 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                     onDone(successFile)
                 }
             } else {
-                throw lastErr ?: IOException("Could not download a valid PDF from Alice & Books.")
+                throw lastErr ?: IOException("Could not download a valid PDF.")
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
