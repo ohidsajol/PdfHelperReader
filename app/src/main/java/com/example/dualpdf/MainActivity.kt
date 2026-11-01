@@ -3397,19 +3397,21 @@ fun installApk(ctx: Context, apkFile: File) {
 
         val apkUri = androidx.core.content.FileProvider.getUriForFile(
             ctx,
-            "${ctx.packageName}.fileprovider",
+            "com.example.pdfhelperreader.fileprovider",
             apkFile
         )
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         ctx.startActivity(intent)
     } catch (e: Exception) {
-        Toast.makeText(ctx, "Install error: ${e.message}", Toast.LENGTH_LONG).show()
+        e.printStackTrace()
+        Toast.makeText(ctx, "Install error: ${e.javaClass.simpleName} - ${e.message}", Toast.LENGTH_LONG).show()
     }
 }
 
