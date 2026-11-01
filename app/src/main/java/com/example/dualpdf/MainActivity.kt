@@ -1766,9 +1766,40 @@ fun ReaderScreen(reader: Reader) {
 
         if (showLobDialog) {
             val catalog = remember { loadOnlineBooksCatalog(ctx) }
+            var lobTabSource by remember { mutableIntStateOf(0) }
+            var gutenbergSearchQuery by remember { mutableStateOf("") }
+            var gutenbergResults by remember { mutableStateOf<List<GutenbergBookItem>>(emptyList()) }
+            var isSearchingGutenberg by remember { mutableStateOf(false) }
+
+            LaunchedEffect(lobTabSource, gutenbergSearchQuery) {
+                if (lobTabSource == 1) {
+                    isSearchingGutenberg = true
+                    if (gutenbergSearchQuery.isNotBlank()) delay(400)
+                    gutenbergResults = fetchGutenbergBooks(gutenbergSearchQuery)
+                    isSearchingGutenberg = false
+                }
+            }
+
             AlertDialog(
                 onDismissRequest = { if (!isDownloadingLob) showLobDialog = false },
-                title = { Text("Online Books") },
+                title = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = lobTabSource == 0,
+                            onClick = { lobTabSource = 0 },
+                            label = { Text("Online Books") }
+                        )
+                        FilterChip(
+                            selected = lobTabSource == 1,
+                            onClick = { lobTabSource = 1 },
+                            label = { Text("Gutenberg Books") }
+                        )
+                    }
+                },
                 text = {
                     Column {
                         if (isDownloadingLob) {
@@ -1784,12 +1815,12 @@ fun ReaderScreen(reader: Reader) {
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Downloading PDF to Downloads/PdfHelperReader_files...",
+                                    text = "Downloading to Downloads/PdfHelperReader_files...",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        } else {
+                        } else if (lobTabSource == 0) {
                             LazyColumn(
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1843,6 +1874,104 @@ fun ReaderScreen(reader: Reader) {
                                                 Text(group.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                                             }
                                             Text("Download ➔", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                                OutlinedTextField(
+                                    value = gutenbergSearchQuery,
+                                    onValueChange = { gutenbergSearchQuery = it },
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    placeholder = { Text("Search Gutenberg title or author...") },
+                                    singleLine = true,
+                                    trailingIcon = {
+                                        if (gutenbergSearchQuery.isNotBlank()) {
+                                            IconButton(onClick = { gutenbergSearchQuery = "" }) {
+                                                Text("✕")
+                                            }
+                                        }
+                                    }
+                                )
+
+                                if (isSearchingGutenberg) {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator()
+                                    }
+                                } else if (gutenbergResults.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("No Gutenberg books found.", color = MaterialTheme.colorScheme.outline)
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxWidth().weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(gutenbergResults) { b ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                                    Text(b.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                    Text(b.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                    FilledTonalButton(
+                                                        onClick = {
+                                                            isDownloadingLob = true
+                                                            downloadingBookTitle = "${b.title} (EPUB)"
+                                                            scope.launch {
+                                                                downloadGutenbergBook(ctx, b, isEpub = true, onDone = { file ->
+                                                                    isDownloadingLob = false
+                                                                    showLobDialog = false
+                                                                    reader.onBookPicked(Uri.fromFile(file))
+                                                                    Toast.makeText(ctx, "${b.title} loaded!", Toast.LENGTH_SHORT).show()
+                                                                }, onError = { err ->
+                                                                    isDownloadingLob = false
+                                                                    Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                                                })
+                                                            }
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                        modifier = Modifier.height(28.dp)
+                                                    ) {
+                                                        Text("EPUB", style = MaterialTheme.typography.labelSmall)
+                                                    }
+
+                                                    Button(
+                                                        onClick = {
+                                                            isDownloadingLob = true
+                                                            downloadingBookTitle = "${b.title} (PDF)"
+                                                            scope.launch {
+                                                                downloadGutenbergBook(ctx, b, isEpub = false, onDone = { file ->
+                                                                    isDownloadingLob = false
+                                                                    showLobDialog = false
+                                                                    reader.onBookPicked(Uri.fromFile(file))
+                                                                    Toast.makeText(ctx, "${b.title} loaded!", Toast.LENGTH_SHORT).show()
+                                                                }, onError = { err ->
+                                                                    isDownloadingLob = false
+                                                                    Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                                                })
+                                                            }
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                        modifier = Modifier.height(28.dp)
+                                                    ) {
+                                                        Text("PDF", style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2847,6 +2976,144 @@ fun loadOnlineBooksCatalog(ctx: Context): List<OnlineAuthorGroup> {
         }
     } catch (e: Exception) {
         emptyList()
+    }
+}
+
+data class GutenbergBookItem(
+    val id: Int,
+    val title: String,
+    val author: String,
+    val epubUrl: String?,
+    val pdfUrl: String?
+)
+
+suspend fun fetchGutenbergBooks(query: String? = null): List<GutenbergBookItem> = withContext(Dispatchers.IO) {
+    try {
+        val searchUrl = if (!query.isNullOrBlank()) {
+            "https://gutendex.com/books/?search=${Uri.encode(query)}"
+        } else {
+            "https://gutendex.com/books/"
+        }
+
+        val url = java.net.URL(searchUrl)
+        val conn = url.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        conn.connectTimeout = 8000
+        conn.readTimeout = 10000
+
+        if (conn.responseCode in 200..399) {
+            val jsonStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val root = Gson().fromJson(jsonStr, com.google.gson.JsonObject::class.java)
+            val results = root.getAsJsonArray("results") ?: return@withContext emptyList()
+
+            val list = mutableListOf<GutenbergBookItem>()
+            for (elem in results) {
+                val obj = elem.asJsonObject
+                val id = obj.get("id")?.asInt ?: 0
+                val title = obj.get("title")?.asString ?: "Untitled"
+                val authorsArray = obj.getAsJsonArray("authors")
+                val authorName = if (authorsArray != null && authorsArray.size() > 0) {
+                    authorsArray.get(0).asJsonObject.get("name")?.asString ?: "Unknown Author"
+                } else {
+                    "Unknown Author"
+                }
+
+                val formatsObj = obj.getAsJsonObject("formats")
+                var epubUrl: String? = null
+                var pdfUrl: String? = null
+
+                if (formatsObj != null) {
+                    if (formatsObj.has("application/epub+zip")) {
+                        epubUrl = formatsObj.get("application/epub+zip")?.asString
+                    }
+                    if (formatsObj.has("application/pdf")) {
+                        pdfUrl = formatsObj.get("application/pdf")?.asString
+                    } else if (formatsObj.has("text/plain; charset=utf-8")) {
+                        pdfUrl = formatsObj.get("text/plain; charset=utf-8")?.asString
+                    }
+                }
+
+                if (epubUrl == null && id > 0) {
+                    epubUrl = "https://www.gutenberg.org/cache/epub/$id/pg$id.epub"
+                }
+                if (pdfUrl == null && id > 0) {
+                    pdfUrl = "https://www.gutenberg.org/cache/epub/$id/pg$id.txt"
+                }
+
+                list.add(GutenbergBookItem(id, title, authorName, epubUrl, pdfUrl))
+            }
+            list
+        } else {
+            emptyList()
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+suspend fun downloadGutenbergBook(
+    ctx: Context,
+    book: GutenbergBookItem,
+    isEpub: Boolean,
+    onDone: (File) -> Unit,
+    onError: (Exception) -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val targetDir = File(downloadsDir, "PdfHelperReader_files")
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            val cleanTitle = book.title.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(40)
+            val ext = if (isEpub) ".epub" else ".pdf"
+            val destFile = File(targetDir, "${cleanTitle}$ext")
+
+            if (destFile.exists() && destFile.length() > 5000) {
+                withContext(Dispatchers.Main) {
+                    onDone(destFile)
+                }
+                return@withContext
+            }
+
+            val targetUrl = if (isEpub) (book.epubUrl ?: "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.epub")
+                            else (book.pdfUrl ?: "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.txt")
+
+            val url = java.net.URL(targetUrl)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            conn.connectTimeout = 12000
+            conn.readTimeout = 20000
+            conn.instanceFollowRedirects = true
+
+            if (conn.responseCode in 200..399) {
+                if (isEpub || targetUrl.endsWith(".pdf") || conn.contentType?.contains("pdf") == true) {
+                    destFile.outputStream().use { output ->
+                        conn.inputStream.use { input ->
+                            input.copyTo(output)
+                        }
+                    }
+                } else {
+                    val rawText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val epubData = EpubBook(book.title, book.author, listOf(rawText))
+                    EpubParser.convertEpubToPdf(epubData, destFile)
+                }
+
+                android.media.MediaScannerConnection.scanFile(
+                    ctx, arrayOf(destFile.absolutePath), null, null
+                )
+                withContext(Dispatchers.Main) {
+                    onDone(destFile)
+                }
+            } else {
+                throw IOException("Server returned HTTP ${conn.responseCode}")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onError(e)
+            }
+        }
     }
 }
 
