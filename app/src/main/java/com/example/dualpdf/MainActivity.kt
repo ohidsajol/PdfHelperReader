@@ -944,28 +944,6 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 }
                 bookmarks.addAll(clean)
             } catch (e: Exception) {}
-
-            if (bookmarks.size <= 1) {
-                try {
-                    prefs.all.forEach { (k, v) ->
-                        if (k.startsWith("bookmarks_") && k != "bookmarks_$bookKey" && v is String && v.isNotBlank() && v != "[]") {
-                            val type = object : TypeToken<List<Bookmark>>() {}.type
-                            val list: List<Bookmark> = Gson().fromJson(v, type) ?: emptyList()
-                            if (list.size > bookmarks.size) {
-                                val clean = list.map {
-                                    it.copy(
-                                        name = it.name ?: "Bookmark",
-                                        snippet = it.snippet ?: ""
-                                    )
-                                }
-                                bookmarks.clear()
-                                bookmarks.addAll(clean)
-                                editPrefs { putString("bookmarks_$bookKey", Gson().toJson(clean)) }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {}
-            }
         }
     }
     
