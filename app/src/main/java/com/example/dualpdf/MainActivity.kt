@@ -750,9 +750,13 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             val json = prefs.getString("vocab_pagemap_$bookKey", null)
             if (json != null) {
                 try {
-                    val type = object : TypeToken<Map<Int, Int>>() {}.type
-                    map = Gson().fromJson(json, type)
-                    if (map != null) vocabPageMaps[bookKey] = map
+                    val type = object : TypeToken<Map<String, Int>>() {}.type
+                    val rawMap: Map<String, Int>? = Gson().fromJson(json, type)
+                    if (rawMap != null) {
+                        val intMap = rawMap.mapKeys { it.key.toIntOrNull() ?: -1 }.filterKeys { it > 0 }
+                        vocabPageMaps[bookKey] = intMap
+                        map = intMap
+                    }
                 } catch (e: Exception) {}
             }
         }
