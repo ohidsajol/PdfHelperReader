@@ -516,10 +516,12 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     private fun syncToDisk() {
         scope.launch(Dispatchers.IO) {
             try {
-                stateFile.parentFile?.mkdirs()
-                val map = prefs.all
-                val json = Gson().toJson(map)
-                stateFile.writeText(json)
+                if (prefs.all.isNotEmpty()) {
+                    stateFile.parentFile?.mkdirs()
+                    val map = prefs.all
+                    val json = Gson().toJson(map)
+                    stateFile.writeText(json)
+                }
             } catch (e: Exception) {}
         }
     }
@@ -629,6 +631,18 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         if (entry.uri == tutorialUriStr || entry.name == "Tutorial") return
         history.remove(entry)
         saveHistory()
+    }
+
+    fun syncFromDiskAndRestore() {
+        syncFromDisk()
+        isDarkMode = getBoolPref("is_dark_mode", false)
+        loadBookmarks()
+        loadHistory()
+
+        val lastBook = prefs.getString("last_book_uri", null)
+        if (!lastBook.isNullOrBlank() && book.doc == null) {
+            openBook(Uri.parse(lastBook))
+        }
     }
 
     /** Reopen whatever was open last time. */
@@ -1034,11 +1048,54 @@ class MainActivity : ComponentActivity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var reader: Reader
 
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        reader.syncFromDiskAndRestore()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         reader = Reader(applicationContext, scope)
         reader.restore()
+        checkPermissions()
         setContent { AppTheme { ReaderScreen(reader) } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        reader.syncFromDiskAndRestore()
+    }
+
+    private fun checkPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                try {
+                    val intent = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    startActivity(intent)
+                }
+            } else {
+                reader.syncFromDiskAndRestore()
+            }
+        } else {
+            val readPerm = ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            val writePerm = ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (readPerm != PackageManager.PERMISSION_GRANTED || writePerm != PackageManager.PERMISSION_GRANTED) {
+                requestPermissionLauncher.launch(
+                    arrayOf(
+                        android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    )
+                )
+            } else {
+                reader.syncFromDiskAndRestore()
+            }
+        }
     }
 
     override fun onDestroy() {
