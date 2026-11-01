@@ -704,7 +704,36 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         prefs.getString("last_book_uri", null)?.let { openBook(Uri.parse(it)) }
     }
 
-    fun onBookPicked(uri: Uri) { persist(uri); openBook(uri) }
+    fun resolveFileUri(uri: Uri, name: String? = null): Uri {
+        if (uri.scheme == "file") {
+            val file = File(uri.path!!)
+            if (file.exists()) return uri
+            val fileName = file.name
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val f1 = File(downloadsDir, "PdfHelperReader_files/$fileName")
+            val f2 = File(downloadsDir, fileName)
+            if (f1.exists()) return Uri.fromFile(f1)
+            if (f2.exists()) return Uri.fromFile(f2)
+            return uri
+        }
+
+        val displayName = name ?: Sidecar.displayName(ctx, uri) ?: uri.lastPathSegment ?: ""
+        val cleanName = displayName.substringAfterLast('/')
+        if (cleanName.isNotBlank()) {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val f1 = File(downloadsDir, "PdfHelperReader_files/$cleanName")
+            val f2 = File(downloadsDir, cleanName)
+            if (f1.exists()) return Uri.fromFile(f1)
+            if (f2.exists()) return Uri.fromFile(f2)
+        }
+        return uri
+    }
+
+    fun onBookPicked(uri: Uri, name: String? = null) {
+        val resolved = resolveFileUri(uri, name)
+        persist(resolved)
+        openBook(resolved)
+    }
 
     fun onVocabPicked(uri: Uri, targetPage: Int? = null) {
         if (bookUri == null) return
@@ -1717,7 +1746,7 @@ fun ReaderScreen(reader: Reader) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            reader.onBookPicked(Uri.parse(h.uri))
+                                            reader.onBookPicked(Uri.parse(h.uri), h.name)
                                             showHistory = false
                                         }
                                         .padding(vertical = 10.dp),
