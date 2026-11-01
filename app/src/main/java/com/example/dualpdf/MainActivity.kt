@@ -3327,11 +3327,10 @@ suspend fun downloadAppUpdateApk(
 ) {
     withContext(Dispatchers.IO) {
         try {
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val targetDir = File(downloadsDir, "PdfHelperReader_files")
-            if (!targetDir.exists()) targetDir.mkdirs()
+            val updateDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.getExternalFilesDir(null) ?: ctx.cacheDir
+            if (!updateDir.exists()) updateDir.mkdirs()
 
-            val updateApkFile = File(targetDir, "PdfHelperReader_update.apk")
+            val updateApkFile = File(updateDir, "PdfHelperReader_update.apk")
             if (updateApkFile.exists()) updateApkFile.delete()
 
             val apkUrl = java.net.URL(downloadUrl)
@@ -3399,9 +3398,10 @@ fun installApk(ctx: Context, apkFile: File) {
 
         pendingApkToInstall = null
 
+        val authority = "${ctx.packageName}.fileprovider"
         val apkUri = androidx.core.content.FileProvider.getUriForFile(
             ctx,
-            "com.example.pdfhelperreader.fileprovider",
+            authority,
             apkFile
         )
 
