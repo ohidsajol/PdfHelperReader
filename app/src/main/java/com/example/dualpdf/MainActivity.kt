@@ -237,10 +237,6 @@ class PdfDoc private constructor(
         /** Opens [uri]; falls back to a cache copy if the provider's stream isn't seekable. */
         fun open(ctx: Context, uri: Uri): PdfDoc {
             if (EpubParser.isEpub(ctx, uri)) {
-                val input = ctx.contentResolver.openInputStream(uri)
-                    ?: throw FileNotFoundException("Cannot open EPUB stream for $uri")
-                val epubBook = input.use { EpubParser.parseEpub(it) }
-
                 val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 val targetDir = File(downloadsDir, "PdfHelperReader_files")
                 if (!targetDir.exists()) targetDir.mkdirs()
@@ -250,6 +246,9 @@ class PdfDoc private constructor(
                 val epubConvertedFile = File(targetDir, "epub_$cleanBase.pdf")
 
                 if (!epubConvertedFile.exists() || epubConvertedFile.length() < 1000) {
+                    val input = ctx.contentResolver.openInputStream(uri)
+                        ?: throw FileNotFoundException("Cannot open EPUB stream for $uri")
+                    val epubBook = input.use { EpubParser.parseEpub(it) }
                     EpubParser.convertEpubToPdf(epubBook, epubConvertedFile)
                     android.media.MediaScannerConnection.scanFile(
                         ctx, arrayOf(epubConvertedFile.absolutePath), arrayOf("application/pdf"), null
@@ -535,26 +534,38 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
                 if (totalSize <= maxSizeBytes) return@launch
 
+                // Priority 1: Vocabulary files (*_vocab.pdf or .*_vocab.pdf), oldest first
                 val vocabFiles = allFiles.filter { f ->
                     val name = f.name.lowercase()
                     name.contains("_vocab.pdf")
                 }.sortedBy { it.lastModified() }
 
+                // Priority 2: Converted files (any converted format: epub_*, mobi_*, fb2_*, converted_*, *_converted.*), oldest first
                 val convertedFiles = allFiles.filter { f ->
                     val name = f.name.lowercase()
-                    !vocabFiles.contains(f) && (name.startsWith("epub_") || name.startsWith(".epub_"))
+                    !vocabFiles.contains(f) && (
+                        name.startsWith("epub_") || name.startsWith(".epub_") ||
+                        name.startsWith("mobi_") || name.startsWith(".mobi_") ||
+                        name.startsWith("converted_") || name.startsWith(".converted_") ||
+                        name.contains("_converted.") || name.contains(".converted.")
+                    )
                 }.sortedBy { it.lastModified() }
 
+                // Priority 3: Downloaded books / other files (excluding .PdfHelperReader_state.json), oldest first
                 val downloadedFiles = allFiles.filter { f ->
                     !vocabFiles.contains(f) && !convertedFiles.contains(f) && f.name != ".PdfHelperReader_state.json"
                 }.sortedBy { it.lastModified() }
 
+                // Delete step-by-step: oldest file first, checking 500MB constraint after each deletion
                 for (fileGroup in listOf(vocabFiles, convertedFiles, downloadedFiles)) {
                     for (file in fileGroup) {
                         if (totalSize <= maxSizeBytes) break
                         val fSize = file.length()
                         if (file.exists() && file.delete()) {
                             totalSize -= fSize
+                            android.media.MediaScannerConnection.scanFile(
+                                ctx, arrayOf(file.absolutePath), null, null
+                            )
                         }
                     }
                     if (totalSize <= maxSizeBytes) break
