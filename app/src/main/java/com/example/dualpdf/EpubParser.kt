@@ -159,18 +159,18 @@ object EpubParser {
         PdfWriter.getInstance(document, outputFile.outputStream())
         document.open()
 
-        val titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22f, BaseColor.BLACK)
-        val authorFont = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 14f, BaseColor.DARK_GRAY)
-        val bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 10.5f, BaseColor.BLACK)
+        val titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 26f, BaseColor.BLACK)
+        val authorFont = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 16f, BaseColor.DARK_GRAY)
+        val bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 14f, BaseColor.BLACK)
 
         val pTitle = Paragraph(epub.title, titleFont)
         pTitle.alignment = Element.ALIGN_CENTER
-        pTitle.spacingAfter = 10f
+        pTitle.spacingAfter = 12f
         document.add(pTitle)
 
         val pAuthor = Paragraph("By ${epub.author}", authorFont)
         pAuthor.alignment = Element.ALIGN_CENTER
-        pAuthor.spacingAfter = 20f
+        pAuthor.spacingAfter = 24f
         document.add(pAuthor)
 
         for (chapterText in epub.chapterTexts) {
@@ -181,7 +181,8 @@ object EpubParser {
                 if (trimmed.isEmpty()) {
                     if (paragraphText.isNotEmpty()) {
                         val p = Paragraph(paragraphText.toString(), bodyFont)
-                        p.spacingAfter = 8f
+                        p.leading = 18f
+                        p.spacingAfter = 10f
                         document.add(p)
                         paragraphText = StringBuilder()
                     }
@@ -192,7 +193,8 @@ object EpubParser {
             }
             if (paragraphText.isNotEmpty()) {
                 val p = Paragraph(paragraphText.toString(), bodyFont)
-                p.spacingAfter = 8f
+                p.leading = 18f
+                p.spacingAfter = 10f
                 document.add(p)
             }
         }

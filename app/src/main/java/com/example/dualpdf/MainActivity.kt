@@ -240,12 +240,23 @@ class PdfDoc private constructor(
                 val input = ctx.contentResolver.openInputStream(uri)
                     ?: throw FileNotFoundException("Cannot open EPUB stream for $uri")
                 val epubBook = input.use { EpubParser.parseEpub(it) }
-                val epubCacheFile = File(ctx.cacheDir, "epub_${uri.toString().hashCode().toUInt().toString(16)}.pdf")
-                if (!epubCacheFile.exists() || epubCacheFile.length() < 1000) {
-                    EpubParser.convertEpubToPdf(epubBook, epubCacheFile)
+
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val targetDir = File(downloadsDir, "PdfHelperReader_files")
+                if (!targetDir.exists()) targetDir.mkdirs()
+
+                val rawName = Sidecar.displayName(ctx, uri) ?: uri.lastPathSegment ?: "epub_book.epub"
+                val cleanBase = rawName.removePrefix(".").replace(Regex("\\.epub$", RegexOption.IGNORE_CASE), "")
+                val epubConvertedFile = File(targetDir, "$cleanBase.pdf")
+
+                if (!epubConvertedFile.exists() || epubConvertedFile.length() < 1000) {
+                    EpubParser.convertEpubToPdf(epubBook, epubConvertedFile)
+                    android.media.MediaScannerConnection.scanFile(
+                        ctx, arrayOf(epubConvertedFile.absolutePath), arrayOf("application/pdf"), null
+                    )
                 }
-                val pfd = ParcelFileDescriptor.open(epubCacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
-                val doc = PdfDoc(pfd, PdfRenderer(pfd), epubCacheFile)
+                val pfd = ParcelFileDescriptor.open(epubConvertedFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val doc = PdfDoc(pfd, PdfRenderer(pfd), epubConvertedFile)
                 CoroutineScope(Dispatchers.IO).launch {
                     doc.startRatioCompute()
                 }
