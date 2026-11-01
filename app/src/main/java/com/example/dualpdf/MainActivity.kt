@@ -2625,34 +2625,7 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                 return@withContext
             }
 
-            // Tier 2: Unpack directly from APK assets/online_books/ if present
-            val assetPath = "online_books/${book.fileName}"
-            val assetExists = runCatching {
-                ctx.assets.open(assetPath).use { it.read() }
-            }.isSuccess
-
-            if (assetExists) {
-                try {
-                    ctx.assets.open(assetPath).use { input ->
-                        destFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    if (destFile.exists() && destFile.length() > 5000) {
-                        android.media.MediaScannerConnection.scanFile(
-                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
-                        )
-                        withContext(Dispatchers.Main) {
-                            onDone(destFile)
-                        }
-                        return@withContext
-                    }
-                } catch (e: Exception) {
-                    destFile.delete()
-                }
-            }
-
-            // Tier 3: Download from GitHub raw CDN repository or Alice & Books candidates
+            // Tier 2: Download directly from GitHub raw CDN repository or Alice & Books candidates
             val githubRawUrl = "https://raw.githubusercontent.com/ohidsajol/PdfHelperReader/master/app/src/main/assets/online_books/${book.fileName}"
 
             val candidates = mutableListOf<String>()
