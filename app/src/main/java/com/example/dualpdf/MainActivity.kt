@@ -2625,20 +2625,19 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                 return@withContext
             }
 
-            // Tier 2: Download directly from GitHub raw CDN repository or Alice & Books candidates
-            val githubRawUrl = "https://raw.githubusercontent.com/ohidsajol/PdfHelperReader/master/app/src/main/assets/online_books/${book.fileName}"
+            val pattern = java.util.regex.Pattern.compile("/download-link/(\\d+)/(\\d+)")
+            val matcher = pattern.matcher(book.downloadUrl)
 
             val candidates = mutableListOf<String>()
+            val githubRawUrl = "https://raw.githubusercontent.com/ohidsajol/PdfHelperReader/master/app/src/main/assets/online_books/${book.fileName}"
             candidates.add(githubRawUrl)
             candidates.add(book.downloadUrl)
 
-            val pattern = java.util.regex.Pattern.compile("/download-link/(\\d+)/(\\d+)")
-            val matcher = pattern.matcher(book.downloadUrl)
             if (matcher.find()) {
                 val bookId = matcher.group(1)?.toIntOrNull() ?: 0
                 val initialLinkId = matcher.group(2)?.toIntOrNull() ?: 0
                 if (bookId > 0 && initialLinkId > 0) {
-                    for (offset in listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -2)) {
+                    for (offset in listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1, -2, -3)) {
                         val lid = initialLinkId + offset
                         if (lid > 0) {
                             candidates.add("https://www.aliceandbooks.com/book/download-link/$bookId/$lid")
@@ -2651,38 +2650,57 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
             var lastErr: Exception? = null
 
             for (candidateUrl in candidates) {
-                try {
-                    val url = java.net.URL(candidateUrl)
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.requestMethod = "GET"
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    conn.setRequestProperty("Referer", "https://www.aliceandbooks.com/")
-                    conn.connectTimeout = 10000
-                    conn.readTimeout = 15000
-                    conn.instanceFollowRedirects = true
+                var currentUrl = candidateUrl
+                var redirectCount = 0
+                var conn: java.net.HttpURLConnection? = null
 
-                    if (conn.responseCode in 200..399) {
-                        val tempStream = conn.inputStream
-                        val headerBuffer = ByteArray(10)
-                        val read = tempStream.read(headerBuffer)
-                        val headerStr = String(headerBuffer, 0, read.coerceAtLeast(0), Charsets.US_ASCII)
+                while (redirectCount < 5) {
+                    try {
+                        val url = java.net.URL(currentUrl)
+                        conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.requestMethod = "GET"
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        conn.setRequestProperty("Referer", "https://www.aliceandbooks.com/")
+                        conn.connectTimeout = 10000
+                        conn.readTimeout = 15000
+                        conn.instanceFollowRedirects = false // Preserve headers across redirects!
 
-                        if (headerStr.startsWith("%PDF-")) {
-                            destFile.outputStream().use { output ->
-                                output.write(headerBuffer, 0, read)
-                                tempStream.copyTo(output)
+                        val code = conn.responseCode
+                        if (code in 300..399) {
+                            val loc = conn.getHeaderField("Location")
+                            if (!loc.isNullOrBlank()) {
+                                currentUrl = if (loc.startsWith("http")) loc else "https://www.aliceandbooks.com$loc"
+                                redirectCount++
+                                conn.disconnect()
+                                continue
                             }
-                            successFile = destFile
-                            break
+                        }
+
+                        if (code in 200..299) {
+                            val tempStream = conn.inputStream
+                            val headerBuffer = ByteArray(10)
+                            val read = tempStream.read(headerBuffer)
+                            val headerStr = String(headerBuffer, 0, read.coerceAtLeast(0), Charsets.US_ASCII)
+
+                            if (headerStr.startsWith("%PDF-")) {
+                                destFile.outputStream().use { output ->
+                                    output.write(headerBuffer, 0, read)
+                                    tempStream.copyTo(output)
+                                }
+                                successFile = destFile
+                                break
+                            } else {
+                                conn.disconnect()
+                            }
                         } else {
                             conn.disconnect()
                         }
-                    } else {
-                        conn.disconnect()
+                    } catch (e: Exception) {
+                        lastErr = e
                     }
-                } catch (e: Exception) {
-                    lastErr = e
+                    break
                 }
+                if (successFile != null) break
             }
 
             if (successFile != null && successFile.exists() && successFile.length() > 5000) {
