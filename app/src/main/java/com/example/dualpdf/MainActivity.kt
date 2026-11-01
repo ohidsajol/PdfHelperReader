@@ -496,29 +496,13 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     private suspend fun computeHash(ctx: Context, uri: Uri): String = withContext(Dispatchers.IO) {
-        try {
-            var size = 0L
-            var name = ""
-            if (uri.scheme == "file") {
-                val f = File(uri.path!!)
-                size = f.length()
-                name = f.name
-            } else {
-                ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                    if (c.moveToFirst()) {
-                        val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                        if (sizeIdx != -1) size = c.getLong(sizeIdx)
-                        val nameIdx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                        if (nameIdx != -1) name = c.getString(nameIdx) ?: ""
-                    }
-                }
-            }
-            val cleanName = if (name.isNotBlank()) name.removePrefix(".") else (uri.lastPathSegment?.removePrefix(".") ?: "book")
-            "${cleanName.hashCode().toUInt().toString(16)}_$size"
-        } catch (e: Exception) {
-            val cleanName = uri.lastPathSegment?.removePrefix(".") ?: "book"
-            "${cleanName.hashCode().toUInt().toString(16)}_0"
+        val name = if (uri.scheme == "file") {
+            File(uri.path!!).name
+        } else {
+            Sidecar.displayName(ctx, uri) ?: uri.lastPathSegment ?: "book.pdf"
         }
+        val cleanName = name.removePrefix(".").trim()
+        cleanName.ifBlank { "book.pdf" }
     }
 
     fun toggleDarkMode() {
