@@ -2990,6 +2990,44 @@ data class GutenbergBookItem(
 suspend fun fetchGutenbergBooks(query: String? = null): List<GutenbergBookItem> = withContext(Dispatchers.IO) {
     try {
         val searchUrl = if (!query.isNullOrBlank()) {
+            "https://www.gutenberg.org/ebooks/search/?query=${Uri.encode(query)}"
+        } else {
+            "https://www.gutenberg.org/browse/scores/top"
+        }
+
+        val url = java.net.URL(searchUrl)
+        val conn = url.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        conn.connectTimeout = 10000
+        conn.readTimeout = 12000
+
+        if (conn.responseCode in 200..399) {
+            val html = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val list = mutableListOf<GutenbergBookItem>()
+            val pattern = java.util.regex.Pattern.compile("href=[\"']/ebooks/(\\d+)[\"'][^>]*>[\\s\\S]*?<span class=[\"']title[\"']>([^<]+)</span>(?:[\\s\\S]*?<span class=[\"']subtitle[\"']>([^<]+)</span>)?")
+            val matcher = pattern.matcher(html)
+
+            while (matcher.find()) {
+                val gid = matcher.group(1)?.toIntOrNull() ?: continue
+                val title = matcher.group(2)?.trim() ?: "Untitled"
+                val author = matcher.group(3)?.trim() ?: "Classic Literature"
+
+                val epubUrl = "https://www.gutenberg.org/cache/epub/$gid/pg$gid.epub"
+                val pdfUrl = "https://www.gutenberg.org/cache/epub/$gid/pg$gid.txt"
+
+                list.add(GutenbergBookItem(gid, title, author, epubUrl, pdfUrl))
+                if (list.size >= 30) break
+            }
+
+            if (list.isNotEmpty()) return@withContext list
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    try {
+        val searchUrl = if (!query.isNullOrBlank()) {
             "https://gutendex.com/books/?search=${Uri.encode(query)}"
         } else {
             "https://gutendex.com/books/"
@@ -3019,27 +3057,8 @@ suspend fun fetchGutenbergBooks(query: String? = null): List<GutenbergBookItem> 
                     "Unknown Author"
                 }
 
-                val formatsObj = obj.getAsJsonObject("formats")
-                var epubUrl: String? = null
-                var pdfUrl: String? = null
-
-                if (formatsObj != null) {
-                    if (formatsObj.has("application/epub+zip")) {
-                        epubUrl = formatsObj.get("application/epub+zip")?.asString
-                    }
-                    if (formatsObj.has("application/pdf")) {
-                        pdfUrl = formatsObj.get("application/pdf")?.asString
-                    } else if (formatsObj.has("text/plain; charset=utf-8")) {
-                        pdfUrl = formatsObj.get("text/plain; charset=utf-8")?.asString
-                    }
-                }
-
-                if (epubUrl == null && id > 0) {
-                    epubUrl = "https://www.gutenberg.org/cache/epub/$id/pg$id.epub"
-                }
-                if (pdfUrl == null && id > 0) {
-                    pdfUrl = "https://www.gutenberg.org/cache/epub/$id/pg$id.txt"
-                }
+                val epubUrl = "https://www.gutenberg.org/cache/epub/$id/pg$id.epub"
+                val pdfUrl = "https://www.gutenberg.org/cache/epub/$id/pg$id.txt"
 
                 list.add(GutenbergBookItem(id, title, authorName, epubUrl, pdfUrl))
             }
@@ -3076,38 +3095,85 @@ suspend fun downloadGutenbergBook(
                 return@withContext
             }
 
-            val targetUrl = if (isEpub) (book.epubUrl ?: "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.epub")
-                            else (book.pdfUrl ?: "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.txt")
+            if (isEpub) {
+                val candidateUrls = listOf(
+                    "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.epub",
+                    "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}-images.epub",
+                    "https://www.gutenberg.org/ebooks/${book.id}.epub3.images"
+                )
 
-            val url = java.net.URL(targetUrl)
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            conn.connectTimeout = 12000
-            conn.readTimeout = 20000
-            conn.instanceFollowRedirects = true
+                var downloadedEpub = false
+                for (cUrl in candidateUrls) {
+                    try {
+                        val url = java.net.URL(cUrl)
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.requestMethod = "GET"
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        conn.connectTimeout = 12000
+                        conn.readTimeout = 20000
+                        conn.instanceFollowRedirects = true
 
-            if (conn.responseCode in 200..399) {
-                if (isEpub || targetUrl.endsWith(".pdf") || conn.contentType?.contains("pdf") == true) {
-                    destFile.outputStream().use { output ->
-                        conn.inputStream.use { input ->
-                            input.copyTo(output)
+                        if (conn.responseCode in 200..399) {
+                            val tempStream = conn.inputStream
+                            val headerBuffer = ByteArray(10)
+                            val read = tempStream.read(headerBuffer)
+
+                            if (read >= 4 && headerBuffer[0] == 'P'.code.toByte() && headerBuffer[1] == 'K'.code.toByte()) {
+                                destFile.outputStream().use { output ->
+                                    output.write(headerBuffer, 0, read)
+                                    tempStream.copyTo(output)
+                                }
+                                downloadedEpub = true
+                                break
+                            } else {
+                                conn.disconnect()
+                            }
+                        } else {
+                            conn.disconnect()
                         }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
-                } else {
-                    val rawText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    val epubData = EpubBook(book.title, book.author, listOf(rawText))
-                    EpubParser.convertEpubToPdf(epubData, destFile)
                 }
 
-                android.media.MediaScannerConnection.scanFile(
-                    ctx, arrayOf(destFile.absolutePath), null, null
-                )
-                withContext(Dispatchers.Main) {
-                    onDone(destFile)
+                if (downloadedEpub && destFile.exists() && destFile.length() > 5000) {
+                    android.media.MediaScannerConnection.scanFile(
+                        ctx, arrayOf(destFile.absolutePath), null, null
+                    )
+                    withContext(Dispatchers.Main) {
+                        onDone(destFile)
+                    }
+                    return@withContext
+                } else {
+                    throw IOException("Could not download a valid EPUB document for ${book.title}")
                 }
             } else {
-                throw IOException("Server returned HTTP ${conn.responseCode}")
+                val targetUrl = "https://www.gutenberg.org/cache/epub/${book.id}/pg${book.id}.txt"
+                val url = java.net.URL(targetUrl)
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                conn.connectTimeout = 12000
+                conn.readTimeout = 20000
+                conn.instanceFollowRedirects = true
+
+                if (conn.responseCode in 200..399) {
+                    val rawText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    if (rawText.isBlank() || rawText.length < 500) {
+                        throw IOException("Text content unavailable for ${book.title}")
+                    }
+                    val epubData = EpubBook(book.title, book.author, listOf(rawText))
+                    EpubParser.convertEpubToPdf(epubData, destFile)
+
+                    android.media.MediaScannerConnection.scanFile(
+                        ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                    )
+                    withContext(Dispatchers.Main) {
+                        onDone(destFile)
+                    }
+                } else {
+                    throw IOException("Server returned HTTP ${conn.responseCode}")
+                }
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
