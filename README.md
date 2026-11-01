@@ -1,15 +1,23 @@
-# PdfHelperReader (v2.2.0)
+# PdfHelperReader (v2.3.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK: 26](https://img.shields.io/badge/Min%20SDK-26-blue.svg)](https://android-arsenal.com/api?level=26)
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
-**PdfHelperReader** is a powerful, offline-first, dual-pane Android document reader designed specifically to assist users in reading foreign or complex literature. It reads both **PDF** and **EPUB** eBooks, automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
+**PdfHelperReader** is a powerful, offline-first, dual-pane Android document reader designed specifically to assist users in reading foreign or complex literature. It reads both **PDF** and **EPUB** eBooks, automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, searches Project Gutenberg's 70,000+ catalog, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
 
 ---
 
-## 🌟 Key Features in v2.2.0
+## 🌟 Key Features in v2.3.0
+
+### 📚 Expanded Online Library & Gutenberg Search (`LOB` Button)
+* **Dual-Tab Source Selection**:
+    * **Online Books**: Access 35 hand-picked classic books by Dostoevsky, Nietzsche, Wordsworth, and Byron, streamed on-demand from GitHub raw CDN repository.
+    * **Gutenberg Books**: Real-time browser and search engine for Project Gutenberg's 70,000+ catalog.
+* **Official Gutenberg Search Engine**: Search any book title or author across Project Gutenberg with instant debounced results and popular books showcase (*Pride and Prejudice*, *Frankenstein*, *Moby Dick*, *Sherlock Holmes*, *Dracula*, etc.).
+* **EPUB or PDF Download Options**: Each Gutenberg book features dedicated **[ EPUB ]** and **[ PDF ]** download buttons.
+* **Persistent Search State**: Tapping outside or closing the dialog preserves your active tab, search query, and search results in memory so you don't have to re-type or re-do your search!
 
 ### 📗 Full EPUB eBook Support (`EpubParser`)
 * **Seamless EPUB Reading**: Unzips and converts `.epub` eBooks on demand into clean, typeset vector documents with large, clear **18pt typography**.
@@ -20,10 +28,6 @@
 ### 💾 Smart 500 MB Storage Manager
 * **Automatic Cache Management**: Monitors the size of `Downloads/PdfHelperReader_files/`. If total folder size exceeds **500 MB**, it automatically deletes oldest files step-by-step (Oldest Vocabulary files $\rightarrow$ Oldest Converted files $\rightarrow$ Oldest Downloaded files).
 * **Active File Protection**: Always protects and preserves the **latest active file** in each group from deletion!
-
-### 📚 Online Book Library (`LOB` Button)
-* **35 Classic Unabridged Books**: Includes 35 classic books by Fyodor Dostoevsky (22), Friedrich Nietzsche (10), William Wordsworth (1), and Lord Byron (2).
-* **On-Demand GitHub Raw CDN Streaming**: Streams books on demand directly from your GitHub raw CDN repository (`docs/online_books/<fileName>`), keeping APK size lightweight (**~28MB**) while guaranteeing 100% uptime with zero third-party blocks.
 
 ### 📖 Dual-Pane & Adaptive Layouts
 * **Bidirectional Synced Reading (`SR` Button)**: 1:1 real-time scroll synchronization between the Book and Vocabulary panes in both directions.
