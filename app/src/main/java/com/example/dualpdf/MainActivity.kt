@@ -3327,7 +3327,11 @@ suspend fun downloadAppUpdateApk(
 ) {
     withContext(Dispatchers.IO) {
         try {
-            val updateApkFile = File(ctx.cacheDir, "PdfHelperReader_update.apk")
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val targetDir = File(downloadsDir, "PdfHelperReader_files")
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            val updateApkFile = File(targetDir, "PdfHelperReader_update.apk")
             if (updateApkFile.exists()) updateApkFile.delete()
 
             val apkUrl = java.net.URL(downloadUrl)
