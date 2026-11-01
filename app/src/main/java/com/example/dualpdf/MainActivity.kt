@@ -536,23 +536,29 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         try {
             if (stateFile.exists()) {
                 val json = stateFile.readText()
-                val type = object : TypeToken<Map<String, Any>>() {}.type
-                val map: Map<String, Any> = Gson().fromJson(json, type)
-                val editor = prefs.edit()
-                map.forEach { (k, v) ->
-                    if (k.startsWith("book_page_") || k.startsWith("vocab_page_")) {
-                        if (v is Number) editor.putInt(k, v.toInt())
-                    } else if (k == "is_dark_mode" || k.startsWith("default_book_extracted")) {
-                        if (v is Boolean) editor.putBoolean(k, v)
-                        else if (v is String) editor.putBoolean(k, v.toBoolean())
-                        else if (v is Number) editor.putBoolean(k, v.toInt() != 0)
-                    } else {
-                        editor.putString(k, v.toString())
+                if (json.isNotBlank()) {
+                    val type = object : TypeToken<Map<String, Any>>() {}.type
+                    val map: Map<String, Any> = Gson().fromJson(json, type)
+                    val editor = prefs.edit()
+                    map.forEach { (k, v) ->
+                        if (k.startsWith("book_page_") || k.startsWith("vocab_page_")) {
+                            if (v is Number) editor.putInt(k, v.toInt())
+                        } else if (k == "is_dark_mode" || k.startsWith("default_book_extracted")) {
+                            if (v is Boolean) editor.putBoolean(k, v)
+                            else if (v is String) editor.putBoolean(k, v.toBoolean())
+                            else if (v is Number) editor.putBoolean(k, v.toInt() != 0)
+                        } else if (v is String) {
+                            editor.putString(k, v)
+                        } else {
+                            editor.putString(k, Gson().toJson(v))
+                        }
                     }
+                    editor.apply()
                 }
-                editor.apply()
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun editPrefs(block: android.content.SharedPreferences.Editor.() -> Unit) {
