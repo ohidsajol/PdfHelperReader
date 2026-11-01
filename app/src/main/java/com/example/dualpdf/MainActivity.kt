@@ -1508,6 +1508,7 @@ fun ReaderScreen(reader: Reader) {
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showLobDialog by remember { mutableStateOf(false) }
+    var showAppInfoDialog by remember { mutableStateOf(false) }
     var isDownloadingLob by remember { mutableStateOf(false) }
     var downloadingBookTitle by remember { mutableStateOf("") }
 
@@ -1732,6 +1733,52 @@ fun ReaderScreen(reader: Reader) {
     }
 
     Surface(Modifier.fillMaxSize()) {
+        if (showAppInfoDialog) {
+            AlertDialog(
+                onDismissRequest = { showAppInfoDialog = false },
+                title = { Text("App & Developer Info") },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("DualPDF Reader (v2.3.0)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Text("Advanced Dual-Pane eBook & Vocabulary Reader", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+
+                        Text("Developer:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("Ohid Sajol", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+
+                        Spacer(Modifier.height(4.dp))
+
+                        Text("GitHub Repository:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("github.com/ohidsajol/PdfHelperReader", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+
+                        Spacer(Modifier.height(4.dp))
+
+                        Text("About App:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text(
+                            "DualPDF Reader is designed for deep reading, language learning, and research. It features synchronized dual-pane reading, automatic vocabulary sidecar PDF generation, 964k-word dictionary, full EPUB & PDF support, Project Gutenberg library search, and on-device ML Kit OCR.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAppInfoDialog = false }) {
+                        Text("Close")
+                    }
+                }
+            )
+        }
+
         if (showBookmarks) {
             AlertDialog(
                 onDismissRequest = { showBookmarks = false },
@@ -2438,6 +2485,16 @@ fun ReaderScreen(reader: Reader) {
                         } else {
                             Text("Update")
                         }
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    FilledTonalButton(
+                        onClick = { showAppInfoDialog = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("App Info")
                     }
                 }
                 HorizontalDivider()
