@@ -236,34 +236,47 @@ class PdfDoc private constructor(
 
         /** Opens [uri]; falls back to a cache copy if the provider's stream isn't seekable. */
         fun open(ctx: Context, uri: Uri): PdfDoc {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val doc = if (uri.scheme == "file") {
                 val file = File(uri.path!!)
-                val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                val targetFile = if (file.exists()) file else {
+                    val alt1 = File(downloadsDir, "PdfHelperReader_files/${file.name}")
+                    val alt2 = File(downloadsDir, file.name)
+                    if (alt1.exists()) alt1 else if (alt2.exists()) alt2 else file
+                }
+                val pfd = ParcelFileDescriptor.open(targetFile, ParcelFileDescriptor.MODE_READ_ONLY)
                 PdfDoc(pfd, PdfRenderer(pfd), null)
             } else {
                 val resolver = ctx.contentResolver
-                val pfd = resolver.openFileDescriptor(uri, "r")
-                    ?: throw IOException("The provider returned no file descriptor")
                 try {
+                    val pfd = resolver.openFileDescriptor(uri, "r")
+                        ?: throw IOException("The provider returned no file descriptor")
                     PdfDoc(pfd, PdfRenderer(pfd), null)
                 } catch (e: Exception) {
-                    runCatching { pfd.close() }
-                    if (e !is IOException && e !is IllegalArgumentException) throw e
-                    val cache = File.createTempFile("pdf_", ".pdf", ctx.cacheDir)
-                    try {
-                        val input = resolver.openInputStream(uri)
-                            ?: throw FileNotFoundException("Cannot open $uri")
-                        input.use { i -> cache.outputStream().use { o -> i.copyTo(o) } }
-                        val copyPfd = ParcelFileDescriptor.open(cache, ParcelFileDescriptor.MODE_READ_ONLY)
+                    val name = Sidecar.displayName(ctx, uri) ?: uri.lastPathSegment ?: ""
+                    val alt1 = File(downloadsDir, "PdfHelperReader_files/$name")
+                    val alt2 = File(downloadsDir, name)
+                    val targetFile = if (alt1.exists()) alt1 else if (alt2.exists()) alt2 else null
+                    if (targetFile != null && targetFile.exists()) {
+                        val pfd = ParcelFileDescriptor.open(targetFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                        PdfDoc(pfd, PdfRenderer(pfd), null)
+                    } else {
+                        val cache = File.createTempFile("pdf_", ".pdf", ctx.cacheDir)
                         try {
-                            PdfDoc(copyPfd, PdfRenderer(copyPfd), cache)
-                        } catch (e: Exception) {
-                            runCatching { copyPfd.close() }
+                            val input = resolver.openInputStream(uri)
+                                ?: throw FileNotFoundException("Cannot open $uri")
+                            input.use { i -> cache.outputStream().use { o -> i.copyTo(o) } }
+                            val copyPfd = ParcelFileDescriptor.open(cache, ParcelFileDescriptor.MODE_READ_ONLY)
+                            try {
+                                PdfDoc(copyPfd, PdfRenderer(copyPfd), cache)
+                            } catch (e2: Exception) {
+                                runCatching { copyPfd.close() }
+                                throw e2
+                            }
+                        } catch (e3: Exception) {
+                            cache.delete()
                             throw e
                         }
-                    } catch (e2: Exception) {
-                        cache.delete()
-                        throw e2
                     }
                 }
             }
@@ -598,17 +611,25 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     private fun addToHistory(uri: Uri, name: String) {
-        val uriStr = uri.toString()
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val alt1 = File(downloadsDir, "PdfHelperReader_files/$name")
+        val alt2 = File(downloadsDir, name)
+
+        val finalUri = if (alt1.exists()) Uri.fromFile(alt1)
+                       else if (alt2.exists()) Uri.fromFile(alt2)
+                       else uri
+
+        val uriStr = finalUri.toString()
         if (uriStr == tutorialUriStr || name == "Tutorial") {
             ensureTutorialInHistory()
             saveHistory()
             return
         }
-        val existing = history.find { it.uri == uriStr }
+        val existing = history.find { it.uri == uriStr || it.name == name }
         val now = System.currentTimeMillis()
         val firstOpened = existing?.let { if (it.firstOpenedMs > 0) it.firstOpenedMs else it.timeMs } ?: now
 
-        history.removeAll { it.uri == uriStr }
+        history.removeAll { it.uri == uriStr || it.name == name }
         history.add(0, HistoryEntry(
             uri = uriStr,
             name = name,
