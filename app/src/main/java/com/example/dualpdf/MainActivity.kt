@@ -1096,6 +1096,20 @@ fun ReaderScreen(reader: Reader) {
     val bookListState = rememberLazyListState(initialFirstVisibleItemIndex = reader.book.page)
     val vocabListState = rememberLazyListState(initialFirstVisibleItemIndex = reader.vocab.page)
 
+    var activeScrollSource by remember { mutableStateOf<String?>("BOOK") }
+
+    LaunchedEffect(bookListState.isScrollInProgress) {
+        if (bookListState.isScrollInProgress) {
+            activeScrollSource = "BOOK"
+        }
+    }
+
+    LaunchedEffect(vocabListState.isScrollInProgress) {
+        if (vocabListState.isScrollInProgress) {
+            activeScrollSource = "VOCAB"
+        }
+    }
+
     val isVocabPdfActive = reader.vocab.doc != null &&
         reader.vocabMode == VocabMode.VOCAB_PDF &&
         (reader.vocab.name?.lowercase()?.endsWith("_vocab.pdf") == true ||
@@ -1127,19 +1141,17 @@ fun ReaderScreen(reader: Reader) {
             val off = bookListState.firstVisibleItemScrollOffset
             val layoutInfo = bookListState.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
-            val isScrolling = bookListState.isScrollInProgress
             if (visibleItems.isEmpty()) {
-                (idx to -off) to (1000 to isScrolling)
+                (idx to -off) to 1000
             } else {
                 val topItem = visibleItems.first()
-                (topItem.index to topItem.offset) to (topItem.size to isScrolling)
+                (topItem.index to topItem.offset) to topItem.size
             }
         }
-        .collect { (pair, sizeAndScrolling) ->
+        .collect { (pair, itemSize) ->
             val (bookItemIndex, itemOffset) = pair
-            val (itemSize, isScrolling) = sizeAndScrolling
 
-            if (vocabListState.isScrollInProgress && !isScrolling) return@collect
+            if (activeScrollSource == "VOCAB" && vocabListState.isScrollInProgress) return@collect
 
             val bookPageIndex = bookItemIndex + 1 // 1-based page
             val size = itemSize.coerceAtLeast(1)
@@ -1176,27 +1188,24 @@ fun ReaderScreen(reader: Reader) {
         }
     }
 
-    LaunchedEffect(isSyncedReading, isVocabPdfActive, isContinuousMode, bookListState, vocabListState) {
-        if (!isSyncedReading || !isVocabPdfActive || !isContinuousMode) return@LaunchedEffect
+    LaunchedEffect(isSyncedReading, isVocabPdfActive, isContinuousMode, isPdfViewMode, bookListState, vocabListState) {
+        if (!isSyncedReading || !isVocabPdfActive || !isContinuousMode || !isPdfViewMode) return@LaunchedEffect
         snapshotFlow {
             val idx = vocabListState.firstVisibleItemIndex
             val off = vocabListState.firstVisibleItemScrollOffset
             val layoutInfo = vocabListState.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
-            val isScrolling = vocabListState.isScrollInProgress
             if (visibleItems.isEmpty()) {
-                (idx to -off) to (1000 to isScrolling)
+                (idx to -off) to 1000
             } else {
                 val topItem = visibleItems.first()
-                (topItem.index to topItem.offset) to (topItem.size to isScrolling)
+                (topItem.index to topItem.offset) to topItem.size
             }
         }
-        .collect { (pair, sizeAndScrolling) ->
+        .collect { (pair, itemSize) ->
             val (vocabItemIndex, itemOffset) = pair
-            val (itemSize, isScrolling) = sizeAndScrolling
 
-            // Reverse sync ONLY runs when user is actively dragging/scrolling the Vocab pane
-            if (!isScrolling) return@collect
+            if (activeScrollSource != "VOCAB" || !vocabListState.isScrollInProgress) return@collect
 
             val vocabPageIndex = vocabItemIndex + 1 // 1-based vocab page
             val size = itemSize.coerceAtLeast(1)
