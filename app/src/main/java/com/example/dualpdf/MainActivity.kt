@@ -76,7 +76,7 @@ import java.io.IOException
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private val PDF_MIME = arrayOf("application/pdf")
+private val DOCUMENT_MIMES = arrayOf("application/pdf", "application/epub+zip")
 
 fun renderWidth(widthPx: Int, zoom: Float) =
     (((widthPx * zoom).toInt() + 63) / 64 * 64).coerceIn(256, 3072)
@@ -236,6 +236,22 @@ class PdfDoc private constructor(
 
         /** Opens [uri]; falls back to a cache copy if the provider's stream isn't seekable. */
         fun open(ctx: Context, uri: Uri): PdfDoc {
+            if (EpubParser.isEpub(ctx, uri)) {
+                val input = ctx.contentResolver.openInputStream(uri)
+                    ?: throw FileNotFoundException("Cannot open EPUB stream for $uri")
+                val epubBook = input.use { EpubParser.parseEpub(it) }
+                val epubCacheFile = File(ctx.cacheDir, "epub_${uri.toString().hashCode().toUInt().toString(16)}.pdf")
+                if (!epubCacheFile.exists() || epubCacheFile.length() < 1000) {
+                    EpubParser.convertEpubToPdf(epubBook, epubCacheFile)
+                }
+                val pfd = ParcelFileDescriptor.open(epubCacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val doc = PdfDoc(pfd, PdfRenderer(pfd), epubCacheFile)
+                CoroutineScope(Dispatchers.IO).launch {
+                    doc.startRatioCompute()
+                }
+                return doc
+            }
+
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val doc = if (uri.scheme == "file") {
                 val file = File(uri.path!!)
@@ -2017,7 +2033,7 @@ fun ReaderScreen(reader: Reader) {
                     Spacer(modifier = Modifier.width(8.dp))
 
                     FilledTonalButton(
-                        onClick = { pickBook.launch(PDF_MIME) },
+                        onClick = { pickBook.launch(DOCUMENT_MIMES) },
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.height(28.dp)
                     ) { Text("OB") }
@@ -2025,7 +2041,7 @@ fun ReaderScreen(reader: Reader) {
                     Spacer(modifier = Modifier.width(4.dp))
 
                     FilledTonalButton(
-                        onClick = { pickVocab.launch(PDF_MIME) },
+                        onClick = { pickVocab.launch(DOCUMENT_MIMES) },
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.height(28.dp)
                     ) { Text("OV") }
@@ -2180,7 +2196,7 @@ fun DocumentPanesLayout(
             title = if (reader.book.message != null) "Could not open the book" else "No book open",
             body = reader.book.message ?: "Choose a PDF to start reading."
         ) {
-            Button(onClick = { pickBook.launch(PDF_MIME) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { pickBook.launch(DOCUMENT_MIMES) }, modifier = Modifier.fillMaxWidth()) {
                 Text("Open book")
             }
         }
@@ -2226,7 +2242,7 @@ fun DocumentPanesLayout(
                 Button(onClick = onGenerateVocab, modifier = Modifier.fillMaxWidth()) {
                     Text("Generate Vocab PDF")
                 }
-                Button(onClick = { pickVocab.launch(PDF_MIME) }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { pickVocab.launch(DOCUMENT_MIMES) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Choose vocab PDF")
                 }
                 OutlinedButton(onClick = { pickTree.launch(null) }, modifier = Modifier.fillMaxWidth()) {
