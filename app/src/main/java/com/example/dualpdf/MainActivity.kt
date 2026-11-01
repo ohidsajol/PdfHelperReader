@@ -255,7 +255,7 @@ class PdfDoc private constructor(
                     )
                 }
                 val pfd = ParcelFileDescriptor.open(epubConvertedFile, ParcelFileDescriptor.MODE_READ_ONLY)
-                val doc = PdfDoc(pfd, PdfRenderer(pfd), epubConvertedFile)
+                val doc = PdfDoc(pfd, PdfRenderer(pfd), null)
                 CoroutineScope(Dispatchers.IO).launch {
                     doc.startRatioCompute()
                 }
@@ -752,6 +752,16 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     editPrefs { remove("last_book_uri") }
                 }
             }
+        }
+
+        val cleanBase = entry.name.removePrefix(".").replace(Regex("\\.(epub|pdf)$", RegexOption.IGNORE_CASE), "")
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val epubConvertedFile = File(downloadsDir, "PdfHelperReader_files/epub_$cleanBase.pdf")
+        if (epubConvertedFile.exists()) {
+            epubConvertedFile.delete()
+            android.media.MediaScannerConnection.scanFile(
+                ctx, arrayOf(epubConvertedFile.absolutePath), null, null
+            )
         }
 
         history.remove(entry)
