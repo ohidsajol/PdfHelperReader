@@ -1384,75 +1384,51 @@ fun ReaderScreen(reader: Reader) {
             Toast.makeText(ctx, "Vocab file already exists! Opening...", Toast.LENGTH_SHORT).show()
             reader.onVocabPicked(Uri.fromFile(existingFile))
         } else {
-            val currentBookPage = reader.book.page + 1 // 1-based page
-            val totalBookPages = reader.book.doc?.pageCount ?: 100
-            val startPage = currentBookPage
-            val endPage = (currentBookPage + 1).coerceAtMost(totalBookPages)
-            val quickRange = startPage..endPage
+            val currentBookPage = reader.book.page + 1
 
             isGenerating = true
             genProgressCurrent = 0
             genProgressTotal = 0
 
-            Toast.makeText(ctx, "Instant preview for pages $startPage-$endPage...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "Generating Vocabulary PDF...", Toast.LENGTH_SHORT).show()
 
             reader.generateVocab(
-                pageRange = quickRange,
+                pageRange = null,
                 onProgress = { c, t -> 
                     genProgressCurrent = c
                     genProgressTotal = t
                 },
-                onDone = { quickResult ->
-                    Toast.makeText(ctx, "Instant preview loaded! Generating full document in background...", Toast.LENGTH_SHORT).show()
-                    reader.onVocabPicked(Uri.fromFile(quickResult.outputPdf))
+                onDone = { fullResult ->
+                    try {
+                        if (!vocabDir.exists()) vocabDir.mkdirs()
+                        val destFile = File(vocabDir, expectedName)
+                        if (destFile.exists()) destFile.delete()
+                        fullResult.outputPdf.copyTo(destFile, overwrite = true)
+                        fullResult.outputPdf.delete()
 
-                    // Background full generation
-                    reader.generateVocab(
-                        pageRange = null,
-                        onProgress = { c, t -> 
-                            genProgressCurrent = c
-                            genProgressTotal = t
-                        },
-                        onDone = { fullResult ->
-                            try {
-                                if (!vocabDir.exists()) vocabDir.mkdirs()
-                                val destFile = File(vocabDir, expectedName)
-                                if (destFile.exists()) destFile.delete()
-                                fullResult.outputPdf.copyTo(destFile, overwrite = true)
-                                fullResult.outputPdf.delete()
+                        android.media.MediaScannerConnection.scanFile(
+                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                        )
 
-                                android.media.MediaScannerConnection.scanFile(
-                                    ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
-                                )
+                        reader.saveVocabPageMap(fullResult.pageMap)
 
-                                reader.saveVocabPageMap(fullResult.pageMap)
-
-                                val mappedPage = fullResult.pageMap[currentBookPage]
-                                val targetPage = if (mappedPage != null) {
-                                    (mappedPage - 1).coerceAtLeast(0)
-                                } else {
-                                    ((currentBookPage * 1.75f) - 1).toInt().coerceAtLeast(0)
-                                }
-
-                                reader.onVocabPicked(Uri.fromFile(destFile), targetPage = targetPage)
-
-                                Toast.makeText(ctx, "Full vocab document loaded!", Toast.LENGTH_SHORT).show()
-                                runCatching { quickResult.outputPdf.delete() }
-                            } catch (e: Exception) {
-                                Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
-                            }
-                            isGenerating = false
-                        },
-                        onError = {
-                            isGenerating = false
-                            Toast.makeText(ctx, "Full generation error: ${it.message}", Toast.LENGTH_LONG).show()
-                            runCatching { quickResult.outputPdf.delete() }
+                        val mappedPage = fullResult.pageMap[currentBookPage]
+                        val targetPage = if (mappedPage != null) {
+                            (mappedPage - 1).coerceAtLeast(0)
+                        } else {
+                            0
                         }
-                    )
+
+                        reader.onVocabPicked(Uri.fromFile(destFile), targetPage = targetPage)
+                        Toast.makeText(ctx, "Vocab document loaded!", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                    isGenerating = false
                 },
                 onError = {
                     isGenerating = false
-                    Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(ctx, "Generation error: ${it.message}", Toast.LENGTH_LONG).show()
                 }
             )
         }
