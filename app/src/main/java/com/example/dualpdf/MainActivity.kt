@@ -525,8 +525,12 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     private val stateFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PdfHelperReader_files/.PdfHelperReader_state.json")
+    @Volatile private var hasSyncedFromDisk = false
 
     private fun syncToDisk() {
+        if (!hasSyncedFromDisk && stateFile.exists()) {
+            return
+        }
         scope.launch(Dispatchers.IO) {
             try {
                 if (prefs.all.isNotEmpty()) {
@@ -550,6 +554,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             if (stateFile.exists()) {
                 val json = stateFile.readText()
                 if (json.isNotBlank()) {
+                    hasSyncedFromDisk = true
                     val type = object : TypeToken<Map<String, Any>>() {}.type
                     val map: Map<String, Any> = Gson().fromJson(json, type)
                     val editor = prefs.edit()
