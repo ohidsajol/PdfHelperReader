@@ -686,6 +686,20 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     
     fun removeFromHistory(entry: HistoryEntry) {
         if (entry.uri == tutorialUriStr || entry.name == "Tutorial") return
+
+        val isCurrentlyOpen = (bookUri != null && (bookUri.toString() == entry.uri || book.name == entry.name))
+        if (isCurrentlyOpen) {
+            scope.launch {
+                lock.withLock {
+                    closePane(book)
+                    closePane(vocab)
+                    bookUri = null
+                    bookKey = ""
+                    editPrefs { remove("last_book_uri") }
+                }
+            }
+        }
+
         history.remove(entry)
         saveHistory()
     }

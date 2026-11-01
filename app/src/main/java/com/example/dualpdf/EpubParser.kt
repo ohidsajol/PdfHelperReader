@@ -159,18 +159,18 @@ object EpubParser {
         PdfWriter.getInstance(document, outputFile.outputStream())
         document.open()
 
-        val titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 28f, BaseColor.BLACK)
-        val authorFont = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 18f, BaseColor.DARK_GRAY)
-        val bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 16f, BaseColor.BLACK)
+        val titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 30f, BaseColor.BLACK)
+        val authorFont = FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 20f, BaseColor.DARK_GRAY)
+        val bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 18f, BaseColor.BLACK)
 
         val pTitle = Paragraph(epub.title, titleFont)
         pTitle.alignment = Element.ALIGN_CENTER
-        pTitle.spacingAfter = 14f
+        pTitle.spacingAfter = 16f
         document.add(pTitle)
 
         val pAuthor = Paragraph("By ${epub.author}", authorFont)
         pAuthor.alignment = Element.ALIGN_CENTER
-        pAuthor.spacingAfter = 26f
+        pAuthor.spacingAfter = 28f
         document.add(pAuthor)
 
         for (chapterText in epub.chapterTexts) {
@@ -181,8 +181,8 @@ object EpubParser {
                 if (trimmed.isEmpty()) {
                     if (paragraphText.isNotEmpty()) {
                         val p = Paragraph(paragraphText.toString(), bodyFont)
-                        p.leading = 20f
-                        p.spacingAfter = 12f
+                        p.leading = 22f
+                        p.spacingAfter = 14f
                         document.add(p)
                         paragraphText = StringBuilder()
                     }
@@ -193,8 +193,8 @@ object EpubParser {
             }
             if (paragraphText.isNotEmpty()) {
                 val p = Paragraph(paragraphText.toString(), bodyFont)
-                p.leading = 20f
-                p.spacingAfter = 12f
+                p.leading = 22f
+                p.spacingAfter = 14f
                 document.add(p)
             }
         }
