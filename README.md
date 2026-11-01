@@ -1,27 +1,38 @@
-# PdfHelperReader (v2.0.0)
+# PdfHelperReader (v2.1.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK: 26](https://img.shields.io/badge/Min%20SDK-26-blue.svg)](https://android-arsenal.com/api?level=26)
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
-**PdfHelperReader** is a powerful, offline-first, dual-pane Android PDF reader designed specifically to assist users in reading foreign or complex literature. It automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
+**PdfHelperReader** is a powerful, offline-first, dual-pane Android PDF reader designed specifically to assist users in reading foreign or complex literature. It automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
 
 ---
 
-## 🌟 Key Features in v2.0.0
+## 🌟 Key Features in v2.1.0
+
+### 📚 Online Book Library (`LOB` Button)
+* **35 Classic Unabridged Books**: Includes 35 classic books organized by author:
+    * **Fyodor Dostoevsky** (22 books: *Crime and Punishment*, *The Brothers Karamazov*, *Notes from Underground*, *The Idiot*, *White Nights*, *The Adolescent*, *The Devils*, *Poor Folk*, etc.)
+    * **Friedrich Nietzsche** (10 books: *Thus Spoke Zarathustra*, *Beyond Good and Evil*, *Ecce Homo*, *The Antichrist*, *The Birth of Tragedy*, *The Gay Science*, etc.)
+    * **William Wordsworth** (*Lyrical Ballads*)
+    * **Lord Byron** (*Don Juan*, *Manfred: A Dramatic Poem*)
+* **Decoupled Asset Catalog (`online_books.json`)**: Loads catalog metadata dynamically from `app/src/main/assets/online_books.json`.
+* **On-Demand GitHub Raw CDN Streaming**: Streams books on demand directly from your GitHub raw CDN repository (`docs/online_books/<fileName>`), keeping APK size lightweight (**~28MB**) while guaranteeing 100% uptime with zero third-party blocks.
+* **Disk Caching**: Downloads files into `Downloads/PdfHelperReader_files/`. Re-opening any book in `LOB` loads it instantly from disk.
 
 ### 📖 Dual-Pane & Adaptive Layouts
 * **Bidirectional Synced Reading (`SR` Button)**: 1:1 real-time scroll synchronization between the Book and Vocabulary panes in both directions.
-* **Continuous Auto-Scroll (`AS` Button)**: Smooth frame-by-frame auto-scroll calibrated at 1 viewport height / 5 minutes that allows manual touch dragging without interrupting the auto-scroll.
+* **Continuous Auto-Scroll (`AS` Button)**: Smooth frame-by-frame auto-scroll calibrated at 1 viewport height / 5 minutes that allows manual touch dragging without interrupting auto-scroll.
 * **Exact Page Sync (`Sync` Button)**: Uses an exact `vocab_map` array (`vocab_map[bookPage] = vocabPage`) to jump the vocabulary pane to the exact definition page for your current book page.
+* **Continuous Mode Clean PaneBar**: In Continuous Mode (`R:C`), redundant zoom and page flip buttons are hidden, displaying only the Page Jump Counter (e.g. `18 / 512`) and the horizontally scrollable Document Title.
 * **Flexible Split Mode (`Both / Book / Vocab`)**: Easily cycle through three viewing modes:
     * *Both*: Book and Vocabulary side-by-side (landscape) or top-and-bottom (portrait).
     * *Book Only*: Full-screen primary book reader.
     * *Vocab Only*: Full-screen vocabulary sidecar.
 
-### 📚 Instant Vocabulary Generation & Enriched Dictionary
-* **Instant 2-Page Temporary Vocab Preview**: When generating a vocabulary PDF, the app creates an instant 2-page preview for your current reading page (~0.1s) while building the full document in the background.
+### 💡 Instant Vocabulary Generation & Enriched Dictionary
+* **Instant 2-Page Temporary Vocab Preview**: Generates an instant 2-page preview for your current reading page (~0.1s) while building the full document in the background.
 * **Auto-Jump & Page Mapping**: Stores a `vocab_map` array mapping book pages to vocabulary pages. Auto-jumps when opening books and when background generation completes.
 * **Compact Multi-Source Dictionary**: 133,273 base root words and 1.83 million variant keys merged from Webster's English Dictionary and WordNet, using a compact `$#$` reference encoding with 3 short, simple meanings per word.
 * **Smart Lemmatization & Variant Resolution**: Inflections (`split`, `splits`, `splitted`, `splitting`) resolve instantly to the exact same 3-meaning definition.
