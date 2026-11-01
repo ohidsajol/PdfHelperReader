@@ -2558,28 +2558,53 @@ fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean, pane: Pane, onPage: (I
 data class OnlineBook(
     val title: String,
     val author: String,
-    val textUrl: String,
+    val downloadUrl: String,
     val fileName: String
 )
 
 val onlineAuthorsAndBooks = listOf(
     "Fyodor Dostoevsky" to listOf(
-        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/2554/pg2554.txt", "Crime_and_Punishment.pdf"),
-        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/28054/pg28054.txt", "The_Brothers_Karamazov.pdf"),
-        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/600/pg600.txt", "Notes_from_Underground.pdf"),
-        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/2638/pg2638.txt", "The_Idiot.pdf"),
-        OnlineBook("White Nights and Other Stories", "Fyodor Dostoevsky", "https://www.gutenberg.org/cache/epub/36034/pg36034.txt", "White_Nights.pdf")
+        OnlineBook("A Gentle Spirit", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/877/2623", "A_Gentle_Spirit.pdf"),
+        OnlineBook("A Little Hero", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/716/2148", "A_Little_Hero.pdf"),
+        OnlineBook("An Honest Thief", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/985/2845", "An_Honest_Thief.pdf"),
+        OnlineBook("Bobok", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/1008/2893", "Bobok.pdf"),
+        OnlineBook("Crime and Punishment", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/127/374", "Crime_and_Punishment.pdf"),
+        OnlineBook("Notes from Underground", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/218/647", "Notes_from_Underground.pdf"),
+        OnlineBook("Poor Folk", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/208/617", "Poor_Folk.pdf"),
+        OnlineBook("The Adolescent", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/1224/3332", "The_Adolescent.pdf"),
+        OnlineBook("The Brothers Karamazov", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/27/74", "The_Brothers_Karamazov.pdf"),
+        OnlineBook("The Crocodile", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/1000/2876", "The_Crocodile.pdf"),
+        OnlineBook("The Devils", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/211/626", "The_Devils.pdf"),
+        OnlineBook("The Double", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/860/2581", "The_Double.pdf"),
+        OnlineBook("The Dream of a Ridiculous Man", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/676/2024", "The_Dream_of_a_Ridiculous_Man.pdf"),
+        OnlineBook("The Eternal Husband", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/924/2719", "The_Eternal_Husband.pdf"),
+        OnlineBook("The Gambler", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/128/378", "The_Gambler.pdf"),
+        OnlineBook("The Grand Inquisitor", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/868/2603", "The_Grand_Inquisitor.pdf"),
+        OnlineBook("The House of the Dead", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/870/2608", "The_House_of_the_Dead.pdf"),
+        OnlineBook("The Idiot", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/321/957", "The_Idiot.pdf"),
+        OnlineBook("The Insulted and Humiliated", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/883/2635", "The_Insulted_and_Humiliated.pdf"),
+        OnlineBook("The Landlady", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/869/2607", "The_Landlady.pdf"),
+        OnlineBook("Uncle's Dream", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/969/2812", "Uncles_Dream.pdf"),
+        OnlineBook("White Nights", "Fyodor Dostoevsky", "https://www.aliceandbooks.com/book/download-link/717/2151", "White_Nights.pdf")
     ),
     "Friedrich Nietzsche" to listOf(
-        OnlineBook("Thus Spoke Zarathustra", "Friedrich Nietzsche", "https://www.gutenberg.org/cache/epub/1998/pg1998.txt", "Thus_Spoke_Zarathustra.pdf"),
-        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.gutenberg.org/cache/epub/4363/pg4363.txt", "Beyond_Good_and_Evil.pdf"),
-        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.gutenberg.org/cache/epub/19322/pg19322.txt", "The_Antichrist.pdf")
+        OnlineBook("Beyond Good and Evil", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/609/1823", "Beyond_Good_and_Evil.pdf"),
+        OnlineBook("Ecce Homo", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/576/1724", "Ecce_Homo.pdf"),
+        OnlineBook("Human, All Too Human", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/821/2463", "Human_All_Too_Human.pdf"),
+        OnlineBook("On the Genealogy of Morals", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/581/1739", "On_the_Genealogy_of_Morals.pdf"),
+        OnlineBook("The Antichrist", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/573/1715", "The_Antichrist.pdf"),
+        OnlineBook("The Birth of Tragedy", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/759/2277", "The_Birth_of_Tragedy.pdf"),
+        OnlineBook("The Dawn of Day", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/825/2475", "The_Dawn_of_Day.pdf"),
+        OnlineBook("The Gay Science", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/1242/3367", "The_Gay_Science.pdf"),
+        OnlineBook("Thus Spake Zarathustra", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/269/800", "Thus_Spake_Zarathustra.pdf"),
+        OnlineBook("Twilight of the Idols", "Friedrich Nietzsche", "https://www.aliceandbooks.com/book/download-link/1243/3369", "Twilight_of_the_Idols.pdf")
     ),
     "William Wordsworth" to listOf(
-        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.gutenberg.org/cache/epub/9622/pg9622.txt", "Lyrical_Ballads.pdf")
+        OnlineBook("Lyrical Ballads", "William Wordsworth", "https://www.aliceandbooks.com/book/download-link/430/1286", "Lyrical_Ballads.pdf")
     ),
     "Lord Byron" to listOf(
-        OnlineBook("Don Juan", "Lord Byron", "https://www.gutenberg.org/cache/epub/21700/21700.txt", "Don_Juan.pdf")
+        OnlineBook("Don Juan", "Lord Byron", "https://www.aliceandbooks.com/book/download-link/441/1319", "Don_Juan.pdf"),
+        OnlineBook("Manfred: A Dramatic Poem", "Lord Byron", "https://www.aliceandbooks.com/book/download-link/820/2460", "Manfred.pdf")
     )
 )
 
@@ -2598,30 +2623,72 @@ suspend fun downloadOnlineBook(ctx: Context, book: OnlineBook, onDone: (File) ->
                 return@withContext
             }
 
-            val url = java.net.URL(book.textUrl)
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            conn.connectTimeout = 15000
-            conn.readTimeout = 20000
-            conn.instanceFollowRedirects = true
+            val pattern = java.util.regex.Pattern.compile("/download-link/(\\d+)/(\\d+)")
+            val matcher = pattern.matcher(book.downloadUrl)
 
-            if (conn.responseCode in 200..399) {
-                val rawText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                if (rawText.isBlank() || rawText.length < 500) {
-                    throw IOException("Failed to download text for ${book.title}")
+            val candidates = mutableListOf<String>()
+            candidates.add(book.downloadUrl)
+
+            if (matcher.find()) {
+                val bookId = matcher.group(1)?.toIntOrNull() ?: 0
+                val initialLinkId = matcher.group(2)?.toIntOrNull() ?: 0
+                if (bookId > 0 && initialLinkId > 0) {
+                    for (offset in listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -2)) {
+                        val lid = initialLinkId + offset
+                        if (lid > 0) {
+                            candidates.add("https://www.aliceandbooks.com/book/download-link/$bookId/$lid")
+                        }
+                    }
                 }
+            }
 
-                convertTextToPdf(book.title, book.author, rawText, destFile)
+            var successFile: File? = null
+            var lastErr: Exception? = null
 
+            for (candidateUrl in candidates) {
+                try {
+                    val url = java.net.URL(candidateUrl)
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    conn.setRequestProperty("Referer", "https://www.aliceandbooks.com/")
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 15000
+                    conn.instanceFollowRedirects = true
+
+                    if (conn.responseCode in 200..399) {
+                        val tempStream = conn.inputStream
+                        val headerBuffer = ByteArray(10)
+                        val read = tempStream.read(headerBuffer)
+                        val headerStr = String(headerBuffer, 0, read.coerceAtLeast(0), Charsets.US_ASCII)
+
+                        if (headerStr.startsWith("%PDF-")) {
+                            destFile.outputStream().use { output ->
+                                output.write(headerBuffer, 0, read)
+                                tempStream.copyTo(output)
+                            }
+                            successFile = destFile
+                            break
+                        } else {
+                            conn.disconnect()
+                        }
+                    } else {
+                        conn.disconnect()
+                    }
+                } catch (e: Exception) {
+                    lastErr = e
+                }
+            }
+
+            if (successFile != null && successFile.exists() && successFile.length() > 5000) {
                 android.media.MediaScannerConnection.scanFile(
-                    ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                    ctx, arrayOf(successFile.absolutePath), arrayOf("application/pdf"), null
                 )
                 withContext(Dispatchers.Main) {
-                    onDone(destFile)
+                    onDone(successFile)
                 }
             } else {
-                throw IOException("Server returned HTTP ${conn.responseCode}")
+                throw lastErr ?: IOException("Could not download a valid PDF from Alice & Books.")
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
