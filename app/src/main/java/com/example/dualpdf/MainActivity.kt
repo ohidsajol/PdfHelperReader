@@ -1503,6 +1503,21 @@ fun ReaderScreen(reader: Reader) {
     var isDownloadingLob by remember { mutableStateOf(false) }
     var downloadingBookTitle by remember { mutableStateOf("") }
 
+    var lobTabSource by remember { mutableIntStateOf(0) }
+    var gutenbergSearchQuery by remember { mutableStateOf("") }
+    var gutenbergResults by remember { mutableStateOf<List<GutenbergBookItem>>(emptyList()) }
+    var isSearchingGutenberg by remember { mutableStateOf(false) }
+    var downloadingGutenbergId by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(lobTabSource, gutenbergSearchQuery) {
+        if (lobTabSource == 1) {
+            isSearchingGutenberg = true
+            if (gutenbergSearchQuery.isNotBlank()) delay(400)
+            gutenbergResults = fetchGutenbergBooks(gutenbergSearchQuery)
+            isSearchingGutenberg = false
+        }
+    }
+
     var splitMode by remember { mutableStateOf(SplitMode.SPLIT_BOTH) }
     var showOcrConfirmDialog by remember { mutableStateOf(false) }
     var isZenMode by remember { mutableStateOf(false) }
@@ -1766,20 +1781,6 @@ fun ReaderScreen(reader: Reader) {
 
         if (showLobDialog) {
             val catalog = remember { loadOnlineBooksCatalog(ctx) }
-            var lobTabSource by remember { mutableIntStateOf(0) }
-            var gutenbergSearchQuery by remember { mutableStateOf("") }
-            var gutenbergResults by remember { mutableStateOf<List<GutenbergBookItem>>(emptyList()) }
-            var isSearchingGutenberg by remember { mutableStateOf(false) }
-            var downloadingGutenbergId by remember { mutableStateOf<Int?>(null) }
-
-            LaunchedEffect(lobTabSource, gutenbergSearchQuery) {
-                if (lobTabSource == 1) {
-                    isSearchingGutenberg = true
-                    if (gutenbergSearchQuery.isNotBlank()) delay(400)
-                    gutenbergResults = fetchGutenbergBooks(gutenbergSearchQuery)
-                    isSearchingGutenberg = false
-                }
-            }
 
             AlertDialog(
                 onDismissRequest = { if (!isDownloadingLob && downloadingGutenbergId == null) showLobDialog = false },
