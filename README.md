@@ -1,25 +1,29 @@
-# PdfHelperReader (v2.1.0)
+# PdfHelperReader (v2.2.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK: 26](https://img.shields.io/badge/Min%20SDK-26-blue.svg)](https://android-arsenal.com/api?level=26)
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
-**PdfHelperReader** is a powerful, offline-first, dual-pane Android PDF reader designed specifically to assist users in reading foreign or complex literature. It automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
+**PdfHelperReader** is a powerful, offline-first, dual-pane Android document reader designed specifically to assist users in reading foreign or complex literature. It reads both **PDF** and **EPUB** eBooks, automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
 
 ---
 
-## 🌟 Key Features in v2.1.0
+## 🌟 Key Features in v2.2.0
+
+### 📗 Full EPUB eBook Support (`EpubParser`)
+* **Seamless EPUB Reading**: Unzips and converts `.epub` eBooks on demand into clean, typeset vector documents with large, clear **18pt typography**.
+* **100% Feature Parity**: All 20+ app features (Synced Reading `SR`, Auto Scroll `AS`, Vocabulary PDF Generation `LV`, Bookmarks `B`/`BL`, History `H`, Dark Mode `T`, ML Kit OCR `O`, and Google Web Search) work 100% identically for EPUB files!
+* **0ms Instant Opening**: Converted EPUB PDFs are stored persistently in `Downloads/PdfHelperReader_files/`. Re-opening any EPUB skips conversion and loads instantly in 0 milliseconds!
+* **Hidden Vocabulary Sidecars**: Vocabulary files are created with a leading dot (`.Book_vocab.pdf`) to keep them hidden from gallery/file managers.
+
+### 💾 Smart 500 MB Storage Manager
+* **Automatic Cache Management**: Monitors the size of `Downloads/PdfHelperReader_files/`. If total folder size exceeds **500 MB**, it automatically deletes oldest files step-by-step (Oldest Vocabulary files $\rightarrow$ Oldest Converted files $\rightarrow$ Oldest Downloaded files).
+* **Active File Protection**: Always protects and preserves the **latest active file** in each group from deletion!
 
 ### 📚 Online Book Library (`LOB` Button)
-* **35 Classic Unabridged Books**: Includes 35 classic books organized by author:
-    * **Fyodor Dostoevsky** (22 books: *Crime and Punishment*, *The Brothers Karamazov*, *Notes from Underground*, *The Idiot*, *White Nights*, *The Adolescent*, *The Devils*, *Poor Folk*, etc.)
-    * **Friedrich Nietzsche** (10 books: *Thus Spoke Zarathustra*, *Beyond Good and Evil*, *Ecce Homo*, *The Antichrist*, *The Birth of Tragedy*, *The Gay Science*, etc.)
-    * **William Wordsworth** (*Lyrical Ballads*)
-    * **Lord Byron** (*Don Juan*, *Manfred: A Dramatic Poem*)
-* **Decoupled Asset Catalog (`online_books.json`)**: Loads catalog metadata dynamically from `app/src/main/assets/online_books.json`.
+* **35 Classic Unabridged Books**: Includes 35 classic books by Fyodor Dostoevsky (22), Friedrich Nietzsche (10), William Wordsworth (1), and Lord Byron (2).
 * **On-Demand GitHub Raw CDN Streaming**: Streams books on demand directly from your GitHub raw CDN repository (`docs/online_books/<fileName>`), keeping APK size lightweight (**~28MB**) while guaranteeing 100% uptime with zero third-party blocks.
-* **Disk Caching**: Downloads files into `Downloads/PdfHelperReader_files/`. Re-opening any book in `LOB` loads it instantly from disk.
 
 ### 📖 Dual-Pane & Adaptive Layouts
 * **Bidirectional Synced Reading (`SR` Button)**: 1:1 real-time scroll synchronization between the Book and Vocabulary panes in both directions.
@@ -31,11 +35,10 @@
     * *Book Only*: Full-screen primary book reader.
     * *Vocab Only*: Full-screen vocabulary sidecar.
 
-### 💡 Instant Vocabulary Generation & Enriched Dictionary
-* **Instant 2-Page Temporary Vocab Preview**: Generates an instant 2-page preview for your current reading page (~0.1s) while building the full document in the background.
-* **Auto-Jump & Page Mapping**: Stores a `vocab_map` array mapping book pages to vocabulary pages. Auto-jumps when opening books and when background generation completes.
-* **Compact Multi-Source Dictionary**: 133,273 base root words and 1.83 million variant keys merged from Webster's English Dictionary and WordNet, using a compact `$#$` reference encoding with 3 short, simple meanings per word.
-* **Smart Lemmatization & Variant Resolution**: Inflections (`split`, `splits`, `splitted`, `splitting`) resolve instantly to the exact same 3-meaning definition.
+### 💡 Vocabulary Generation & Enriched Dictionary
+* **Full Vocabulary PDF Generation**: Creates a complete, styled vocabulary PDF sidecar with full-width separator lines between word entries and automatic page mapping.
+* **Compact Multi-Source Dictionary**: 964,676 unique base root words and variant keys merged from Webster's English Dictionary, WordNet, and Project Gutenberg vocabulary corpus.
+* **Smart Lemmatization & Variant Resolution**: Inflections (`split`, `splits`, `splitted`, `splitting`) resolve instantly to the exact same definition.
 
 ### 🌐 Embedded Google Web Search Browser
 * **System Back Gesture Protection (`BackHandler`)**: System back gestures navigate backward within Google's search history instead of exiting the app.
@@ -49,7 +52,7 @@
 * **Zen Mode (`Z` Button)**: Hides UI toolbars for a distraction-free reading experience, replacing them with a docked right-edge control strip.
 * **Dark Mode (`T` Button)**: Inverts PDF colors dynamically using high-performance `ColorMatrix` color filters for comfortable night reading.
 * **Enhanced History & Bookmarks**:
-    * **History**: Records First Opened and Last Closed timestamps for every book, and includes a `Del vocab` button to delete associated vocabulary files.
+    * **History**: Records First Opened and Last Closed timestamps for every book, with capacity for 1,000 entries and automatic document closure on deletion.
     * **Bookmarks**: Stores creation timestamps and 25-word text snippet previews from the book page.
 
 ---
