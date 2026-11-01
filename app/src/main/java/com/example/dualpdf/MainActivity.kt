@@ -1055,6 +1055,30 @@ fun AppTheme(content: @Composable () -> Unit) {
     )
 }
 
+fun getInverseMappedBookPosition(reader: Reader, vocabContinuousPage: Float, bookTotal: Int, vocabTotal: Int): Float {
+    val targetVocabPage1Based = vocabContinuousPage + 1.0f
+
+    var bestBookPage = -1
+    for (k in 1..bookTotal) {
+        val mapped = reader.getMappedVocabPage(k) ?: continue
+        if (mapped <= targetVocabPage1Based) {
+            bestBookPage = k
+        } else {
+            break
+        }
+    }
+
+    if (bestBookPage > 0) {
+        val startVocab = reader.getMappedVocabPage(bestBookPage) ?: 1
+        val nextVocab = reader.getMappedVocabPage(bestBookPage + 1) ?: (startVocab + 1)
+        val span = (nextVocab - startVocab).coerceAtLeast(1).toFloat()
+        val fraction = ((targetVocabPage1Based - startVocab) / span).coerceIn(0.0f, 1.0f)
+        return (bestBookPage - 1).toFloat() + fraction
+    }
+
+    return (vocabContinuousPage * bookTotal.toFloat() / vocabTotal.toFloat())
+}
+
 @Composable
 fun ReaderScreen(reader: Reader) {
     val ctx = LocalContext.current
@@ -1180,7 +1204,7 @@ fun ReaderScreen(reader: Reader) {
             val vocabTotal = reader.vocab.doc?.pageCount ?: 100
             if (bookTotal <= 0 || vocabTotal <= 0) return@collect
 
-            val bookPosition: Float = (vocabContinuousPage * bookTotal.toFloat() / vocabTotal.toFloat())
+            val bookPosition: Float = getInverseMappedBookPosition(reader, vocabContinuousPage, bookTotal, vocabTotal)
 
             val targetBookItemIndex = bookPosition.toInt().coerceIn(0, bookTotal - 1)
             val remainderFraction = (bookPosition - targetBookItemIndex).coerceIn(0f, 1f)
