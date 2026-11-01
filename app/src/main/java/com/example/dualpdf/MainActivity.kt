@@ -1269,7 +1269,7 @@ class MainActivity : ComponentActivity() {
         val pending = pendingApkToInstall
         if (pending != null && pending.exists()) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
-                installApk(this, pending)
+                installDownloadedApkUri(this, Uri.fromFile(pending), pending)
             }
         }
     }
@@ -2089,27 +2089,7 @@ fun ReaderScreen(reader: Reader) {
                         onClick = {
                             showUpdateInfoDialog = false
                             if (info.apkDownloadUrl.isNotBlank()) {
-                                isAppUpdating = true
-                                updateProgressCurrent = 0
-                                updateProgressTotal = 0
-                                scope.launch {
-                                    downloadAppUpdateApk(
-                                        ctx = ctx,
-                                        downloadUrl = info.apkDownloadUrl,
-                                        onProgress = { current, total ->
-                                            updateProgressCurrent = current
-                                            updateProgressTotal = total
-                                        },
-                                        onDone = { apkFile ->
-                                            isAppUpdating = false
-                                            installApk(ctx, apkFile)
-                                        },
-                                        onError = { err ->
-                                            isAppUpdating = false
-                                            Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
-                                        }
-                                    )
-                                }
+                                startDownloadManagerUpdate(ctx, info.apkDownloadUrl, info.releaseTitle)
                             } else {
                                 Toast.makeText(ctx, "No APK asset found in release.", Toast.LENGTH_LONG).show()
                             }
@@ -3318,65 +3298,57 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = "v2.3.0"):
     }
 }
 
-suspend fun downloadAppUpdateApk(
-    ctx: Context,
-    downloadUrl: String,
-    onProgress: (Int, Int) -> Unit,
-    onDone: (File) -> Unit,
-    onError: (Exception) -> Unit
-) {
-    withContext(Dispatchers.IO) {
-        try {
-            val updateDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.getExternalFilesDir(null) ?: ctx.cacheDir
-            if (!updateDir.exists()) updateDir.mkdirs()
+fun startDownloadManagerUpdate(ctx: Context, apkDownloadUrl: String, title: String = "DualPDF Reader Update") {
+    try {
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val targetDir = File(downloadsDir, "PdfHelperReader_files")
+        if (!targetDir.exists()) targetDir.mkdirs()
 
-            val updateApkFile = File(updateDir, "PdfHelperReader_update.apk")
-            if (updateApkFile.exists()) updateApkFile.delete()
+        val updateApkFile = File(targetDir, "PdfHelperReader_update.apk")
+        if (updateApkFile.exists()) updateApkFile.delete()
 
-            val apkUrl = java.net.URL(downloadUrl)
-            val apkConn = apkUrl.openConnection() as java.net.HttpURLConnection
-            apkConn.requestMethod = "GET"
-            apkConn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            apkConn.connectTimeout = 12000
-            apkConn.readTimeout = 20000
-            apkConn.instanceFollowRedirects = true
+        val downloadManager = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+            ?: throw IOException("DownloadManager service unavailable")
 
-            if (apkConn.responseCode in 200..399) {
-                val totalBytes = apkConn.contentLength
-                var downloadedBytes = 0
+        val request = android.app.DownloadManager.Request(Uri.parse(apkDownloadUrl)).apply {
+            setTitle(title)
+            setDescription("Downloading latest release update...")
+            setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationUri(Uri.fromFile(updateApkFile))
+            setMimeType("application/vnd.android.package-archive")
+        }
 
-                updateApkFile.outputStream().use { output ->
-                    apkConn.inputStream.use { input ->
-                        val buffer = ByteArray(8192)
-                        var read = input.read(buffer)
-                        while (read != -1) {
-                            output.write(buffer, 0, read)
-                            downloadedBytes += read
-                            withContext(Dispatchers.Main) {
-                                onProgress(downloadedBytes, totalBytes)
-                            }
-                            read = input.read(buffer)
-                        }
-                    }
+        val downloadId = downloadManager.enqueue(request)
+        Toast.makeText(ctx, "Downloading update in background... Check notification bar.", Toast.LENGTH_LONG).show()
+
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                val id = intent?.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
+                if (id == downloadId) {
+                    try {
+                        c?.unregisterReceiver(this)
+                    } catch (e: Exception) {}
+
+                    val installUri = downloadManager.getUriForDownloadedFile(downloadId)
+                        ?: Uri.fromFile(updateApkFile)
+
+                    installDownloadedApkUri(c ?: ctx, installUri, updateApkFile)
                 }
-
-                withContext(Dispatchers.Main) {
-                    onDone(updateApkFile)
-                }
-            } else {
-                throw IOException("Server returned HTTP ${apkConn.responseCode}")
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                onError(e)
             }
         }
+
+        val filter = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        androidx.core.content.ContextCompat.registerReceiver(
+            ctx, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+        )
+    } catch (e: Exception) {
+        Toast.makeText(ctx, "Update error: ${e.message}", Toast.LENGTH_LONG).show()
     }
 }
 
 var pendingApkToInstall: File? = null
 
-fun installApk(ctx: Context, apkFile: File) {
+fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
     try {
         if (!apkFile.exists() || apkFile.length() < 1000) {
             Toast.makeText(ctx, "Downloaded APK is invalid or missing.", Toast.LENGTH_LONG).show()
@@ -3398,15 +3370,16 @@ fun installApk(ctx: Context, apkFile: File) {
 
         pendingApkToInstall = null
 
-        val authority = "${ctx.packageName}.fileprovider"
-        val apkUri = androidx.core.content.FileProvider.getUriForFile(
-            ctx,
-            authority,
-            apkFile
-        )
+        val finalUri = if (apkUri.scheme == "content") apkUri else {
+            androidx.core.content.FileProvider.getUriForFile(
+                ctx,
+                "com.example.pdfhelperreader.fileprovider",
+                apkFile
+            )
+        }
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            setDataAndType(finalUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
