@@ -299,9 +299,12 @@ object Sidecar {
             ?.use { if (it.moveToFirst()) it.getString(0) else null }
     } catch (e: Exception) { null }
 
-    /** "The_Brothers_Karamazov.pdf" -> "The_Brothers_Karamazov_vocab.pdf" */
-    fun expectedName(bookName: String): String =
-        bookName.replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "") + "_vocab.pdf"
+    /** "The_Brothers_Karamazov.pdf" -> ".The_Brothers_Karamazov_vocab.pdf" */
+    fun expectedName(bookName: String): String {
+        val clean = bookName.removePrefix(".")
+        val base = clean.replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
+        return ".$base" + "_vocab.pdf"
+    }
 
     fun canOpen(ctx: Context, uri: Uri): Boolean = try {
         ctx.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false
@@ -495,15 +498,26 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     private suspend fun computeHash(ctx: Context, uri: Uri): String = withContext(Dispatchers.IO) {
         try {
             var size = 0L
-            ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                if (c.moveToFirst()) {
-                    val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                    if (sizeIdx != -1) size = c.getLong(sizeIdx)
+            var name = ""
+            if (uri.scheme == "file") {
+                val f = File(uri.path!!)
+                size = f.length()
+                name = f.name
+            } else {
+                ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                        if (sizeIdx != -1) size = c.getLong(sizeIdx)
+                        val nameIdx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIdx != -1) name = c.getString(nameIdx) ?: ""
+                    }
                 }
             }
-            "${uri.toString().hashCode().toUInt().toString(16)}_$size"
+            val cleanName = if (name.isNotBlank()) name.removePrefix(".") else (uri.lastPathSegment?.removePrefix(".") ?: "book")
+            "${cleanName.hashCode().toUInt().toString(16)}_$size"
         } catch (e: Exception) {
-            uri.toString().hashCode().toUInt().toString(16)
+            val cleanName = uri.lastPathSegment?.removePrefix(".") ?: "book"
+            "${cleanName.hashCode().toUInt().toString(16)}_0"
         }
     }
 
@@ -933,18 +947,42 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     private fun loadBookmarks() {
         bookmarks.clear()
-        val json = prefs.getString("bookmarks_$bookKey", "[]")
-        try {
-            val type = object : TypeToken<List<Bookmark>>() {}.type
-            val list: List<Bookmark> = Gson().fromJson(json, type)
-            val clean = list.map {
-                it.copy(
-                    name = it.name ?: "Bookmark",
-                    snippet = it.snippet ?: ""
-                )
+        if (bookKey.isNotBlank()) {
+            val json = prefs.getString("bookmarks_$bookKey", "[]")
+            try {
+                val type = object : TypeToken<List<Bookmark>>() {}.type
+                val list: List<Bookmark> = Gson().fromJson(json, type) ?: emptyList()
+                val clean = list.map {
+                    it.copy(
+                        name = it.name ?: "Bookmark",
+                        snippet = it.snippet ?: ""
+                    )
+                }
+                bookmarks.addAll(clean)
+            } catch (e: Exception) {}
+
+            if (bookmarks.size <= 1) {
+                try {
+                    prefs.all.forEach { (k, v) ->
+                        if (k.startsWith("bookmarks_") && k != "bookmarks_$bookKey" && v is String && v.isNotBlank() && v != "[]") {
+                            val type = object : TypeToken<List<Bookmark>>() {}.type
+                            val list: List<Bookmark> = Gson().fromJson(v, type) ?: emptyList()
+                            if (list.size > bookmarks.size) {
+                                val clean = list.map {
+                                    it.copy(
+                                        name = it.name ?: "Bookmark",
+                                        snippet = it.snippet ?: ""
+                                    )
+                                }
+                                bookmarks.clear()
+                                bookmarks.addAll(clean)
+                                editPrefs { putString("bookmarks_$bookKey", Gson().toJson(clean)) }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {}
             }
-            bookmarks.addAll(clean)
-        } catch (e: Exception) {}
+        }
     }
     
     fun addBookmark() {
@@ -1068,6 +1106,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         val uri = bookUri ?: return
         closePane(vocab)
         val expected = Sidecar.expectedName(book.name ?: "book.pdf")
+        val legacyExpected = (book.name ?: "book.pdf").removePrefix(".").replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "") + "_vocab.pdf"
         expectedVocab = expected
         vocab.name = expected
         vocab.message = null
@@ -1075,11 +1114,14 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         val saved = prefs.getString("vocab_uri_$bookKey", null)?.let(Uri::parse)
         val tree = prefs.getString("tree_uri", null)?.let(Uri::parse)
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val downloadsVocabFile = File(downloadsDir, "PdfHelperReader_files/$expected")
+        val hiddenVocabFile = File(downloadsDir, "PdfHelperReader_files/$expected")
+        val legacyVocabFile = File(downloadsDir, "PdfHelperReader_files/$legacyExpected")
         val found = withContext(Dispatchers.IO) {
             saved?.takeIf { Sidecar.canOpen(ctx, it) } 
-                ?: downloadsVocabFile.takeIf { it.exists() }?.let { Uri.fromFile(it) }
+                ?: hiddenVocabFile.takeIf { it.exists() }?.let { Uri.fromFile(it) }
+                ?: legacyVocabFile.takeIf { it.exists() }?.let { Uri.fromFile(it) }
                 ?: Sidecar.find(ctx, uri, expected, tree)
+                ?: Sidecar.find(ctx, uri, legacyExpected, tree)
         }
         if (found == null) {
             vocab.message = "Could not find \"$expected\" next to the book."
