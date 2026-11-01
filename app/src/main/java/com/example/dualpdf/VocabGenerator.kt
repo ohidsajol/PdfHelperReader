@@ -13,7 +13,9 @@ import com.google.gson.reflect.TypeToken
 import com.itextpdf.text.pdf.PdfReader
 import com.itextpdf.text.pdf.parser.PdfTextExtractor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.io.InputStreamReader
 
@@ -122,6 +124,7 @@ object VocabGenerator {
             var vocabPageNum = 1
 
             for (i in range) {
+                coroutineContext.ensureActive()
                 onProgress(i - range.first + 1, range.count())
                 pageMap[i] = vocabPageNum
 

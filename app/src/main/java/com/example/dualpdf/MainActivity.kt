@@ -617,7 +617,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             lastClosedMs = now
         ))
         ensureTutorialInHistory()
-        if (history.size > 51) history.removeAt(history.lastIndex - 1)
+        if (history.size > 1001) history.removeAt(history.lastIndex - 1)
         saveHistory()
     }
 
@@ -793,8 +793,10 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         onError: (Exception) -> Unit
     ) {
         val uri = bookUri ?: return
-        vocabJob?.cancel()
+        val oldJob = vocabJob
         vocabJob = scope.launch(Dispatchers.IO) {
+            oldJob?.cancel()
+            oldJob?.join()
             try {
                 val inputPdf = File.createTempFile("book_in", ".pdf", ctx.cacheDir)
                 ctx.contentResolver.openInputStream(uri)?.use { i ->
@@ -804,17 +806,21 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 val outputPdf = File(ctx.cacheDir, "vocab_output_${System.currentTimeMillis()}.pdf")
                 
                 val result = VocabGenerator.generate(ctx, inputPdf, outputPdf, pageRange) { current, total ->
-                    scope.launch(Dispatchers.Main) {
-                        onProgress(current, total)
+                    if (coroutineContext.isActive) {
+                        scope.launch(Dispatchers.Main) {
+                            onProgress(current, total)
+                        }
                     }
                 }
                 
                 inputPdf.delete()
-                withContext(Dispatchers.Main) {
-                    onDone(result)
+                if (coroutineContext.isActive) {
+                    withContext(Dispatchers.Main) {
+                        onDone(result)
+                    }
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) {
+                if (e !is CancellationException && coroutineContext.isActive) {
                     withContext(Dispatchers.Main) {
                         onError(e)
                     }
@@ -825,6 +831,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     fun cancelVocab() {
         vocabJob?.cancel()
+        vocabJob = null
     }
 
     fun generateOcr(onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
