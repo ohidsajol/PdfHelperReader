@@ -2415,9 +2415,9 @@ fun ReaderScreen(reader: Reader) {
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    Button(
+                    FilledTonalButton(
                         onClick = {
-                            if (isAppUpdating || isCheckingUpdateInfo) return@Button
+                            if (isAppUpdating || isCheckingUpdateInfo) return@FilledTonalButton
                             isCheckingUpdateInfo = true
                             scope.launch {
                                 try {
@@ -2431,11 +2431,10 @@ fun ReaderScreen(reader: Reader) {
                             }
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                        modifier = Modifier.height(28.dp)
                     ) {
                         if (isCheckingUpdateInfo) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onTertiary, strokeWidth = 2.dp)
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
                             Text("Update")
                         }
