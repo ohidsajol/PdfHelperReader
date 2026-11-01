@@ -556,8 +556,13 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     !vocabFiles.contains(f) && !convertedFiles.contains(f) && f.name != ".PdfHelperReader_state.json"
                 }.sortedBy { it.lastModified() }
 
+                // Keep the latest 1 file in each group protected from deletion
+                val deletableVocab = if (vocabFiles.size > 1) vocabFiles.dropLast(1) else emptyList()
+                val deletableConverted = if (convertedFiles.size > 1) convertedFiles.dropLast(1) else emptyList()
+                val deletableDownloaded = if (downloadedFiles.size > 1) downloadedFiles.dropLast(1) else emptyList()
+
                 // Delete step-by-step: oldest file first, checking 500MB constraint after each deletion
-                for (fileGroup in listOf(vocabFiles, convertedFiles, downloadedFiles)) {
+                for (fileGroup in listOf(deletableVocab, deletableConverted, deletableDownloaded)) {
                     for (file in fileGroup) {
                         if (totalSize <= maxSizeBytes) break
                         val fSize = file.length()
