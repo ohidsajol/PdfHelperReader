@@ -3300,8 +3300,7 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = "v2.3.0"):
 
 fun startDownloadManagerUpdate(ctx: Context, apkDownloadUrl: String, title: String = "DualPDF Reader Update") {
     try {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val targetDir = File(downloadsDir, "PdfHelperReader_files")
+        val targetDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.getExternalFilesDir(null) ?: ctx.filesDir
         if (!targetDir.exists()) targetDir.mkdirs()
 
         val updateApkFile = File(targetDir, "PdfHelperReader_update.apk")
@@ -3370,16 +3369,12 @@ fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
 
         pendingApkToInstall = null
 
-        val finalUri = try {
-            if (apkUri.scheme == "content") {
-                apkUri
-            } else {
-                androidx.core.content.FileProvider.getUriForFile(
-                    ctx,
-                    "${ctx.packageName}.fileprovider",
-                    apkFile
-                )
-            }
+        val contentUri = try {
+            androidx.core.content.FileProvider.getUriForFile(
+                ctx,
+                "${ctx.packageName}.fileprovider",
+                apkFile.canonicalFile
+            )
         } catch (e: Exception) {
             androidx.core.content.FileProvider.getUriForFile(
                 ctx,
@@ -3389,9 +3384,8 @@ fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
         }
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(finalUri, "application/vnd.android.package-archive")
+            setDataAndType(contentUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
