@@ -1679,6 +1679,7 @@ fun ReaderScreen(reader: Reader) {
                                 SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
                             }
                         },
+                        onSetSplitMode = { splitMode = it },
                         pickBook = pickBook,
                         pickVocab = pickVocab,
                         pickTree = pickTree,
@@ -2613,6 +2614,7 @@ fun ReaderScreen(reader: Reader) {
                             SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
                         }
                     },
+                    onSetSplitMode = { splitMode = it },
                     pickBook = pickBook,
                     pickVocab = pickVocab,
                     pickTree = pickTree,
@@ -2716,6 +2718,7 @@ fun DocumentPanesLayout(
     isZenMode: Boolean = false,
     onExitZen: () -> Unit = {},
     onToggleSplitMode: () -> Unit = {},
+    onSetSplitMode: (SplitMode) -> Unit = {},
     pickBook: androidx.activity.result.ActivityResultLauncher<Array<String>>,
     pickVocab: androidx.activity.result.ActivityResultLauncher<Array<String>>,
     pickTree: androidx.activity.result.ActivityResultLauncher<Uri?>,
@@ -2795,23 +2798,23 @@ fun DocumentPanesLayout(
         SplitMode.SPLIT_BOTH -> {
             if (isLandscape) {
                 Row(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, emptyBookCard, externalListState = bookListState)
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
                     VerticalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, emptyVocabCard, externalListState = vocabListState)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
                 }
             } else {
                 Column(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, emptyBookCard, externalListState = bookListState)
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
                     HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, emptyVocabCard, externalListState = vocabListState)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
                 }
             }
         }
         SplitMode.ONLY_BOOK -> {
-            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, emptyBookCard, externalListState = bookListState)
+            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
         }
         SplitMode.ONLY_VOCAB -> {
-            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, emptyVocabCard, externalListState = vocabListState)
+            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
         }
     }
 }
@@ -2828,6 +2831,7 @@ fun PdfPane(
     splitMode: SplitMode = SplitMode.SPLIT_BOTH,
     onExitZen: () -> Unit = {},
     onToggleSplitMode: () -> Unit = {},
+    onSetSplitMode: (SplitMode) -> Unit = {},
     empty: @Composable () -> Unit,
     externalListState: androidx.compose.foundation.lazy.LazyListState? = null
 ) {
@@ -2891,7 +2895,7 @@ fun PdfPane(
                             color = androidx.compose.ui.graphics.Color.White
                         )
 
-                        val showButtons = label == "VOCAB" || (label == "BOOK" && reader.vocab.doc == null)
+                        val showButtons = true
                         if (showButtons) {
                             HorizontalDivider(modifier = Modifier.width(12.dp), color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.3f))
                             Text(
@@ -2907,39 +2911,21 @@ fun PdfPane(
                             Text(
                                 text = "G",
                                 modifier = Modifier.clickable {
-                                    reader.vocabMode = when (reader.vocabMode) {
-                                        VocabMode.VOCAB_PDF -> {
-                                            if (splitMode != SplitMode.SPLIT_BOTH) {
-                                                onToggleSplitMode()
-                                            }
-                                            VocabMode.GOOGLE_WEB
+                                    if (reader.vocabMode == VocabMode.VOCAB_PDF) {
+                                        reader.vocabMode = VocabMode.GOOGLE_WEB
+                                        if (splitMode != SplitMode.SPLIT_BOTH) {
+                                            onSetSplitMode(SplitMode.SPLIT_BOTH)
                                         }
-                                        VocabMode.GOOGLE_WEB -> VocabMode.VOCAB_PDF
+                                        Toast.makeText(ctx, "Google Mode ON (Split View)", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        reader.vocabMode = VocabMode.VOCAB_PDF
+                                        Toast.makeText(ctx, "Google Mode OFF", Toast.LENGTH_SHORT).show()
                                     }
-                                    Toast.makeText(ctx, if (reader.vocabMode == VocabMode.GOOGLE_WEB) "Google Mode ON (Split View)" else "Google Mode OFF", Toast.LENGTH_SHORT).show()
                                 }.padding(vertical = 1.dp, horizontal = 2.dp),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = androidx.compose.ui.graphics.Color.White
                             )
-                            Text(
-                                text = splitLabel,
-                                modifier = Modifier.clickable {
-                                    onToggleSplitMode()
-                                }.padding(vertical = 1.dp, horizontal = 2.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
-                            Text(
-                                text = "X",
-                                modifier = Modifier.clickable(onClick = onExitZen).padding(vertical = 1.dp, horizontal = 2.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
-                        } else if (label == "BOOK") {
-                            HorizontalDivider(modifier = Modifier.width(12.dp), color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.3f))
                             Text(
                                 text = splitLabel,
                                 modifier = Modifier.clickable {
