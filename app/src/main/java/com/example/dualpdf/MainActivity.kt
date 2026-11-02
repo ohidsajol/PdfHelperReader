@@ -1512,6 +1512,9 @@ fun ReaderScreen(reader: Reader) {
     var appUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var isCheckingUpdateInfo by remember { mutableStateOf(false) }
 
+    var downloadedApkFile by remember { mutableStateOf<File?>(null) }
+    var showDownloadedInstructionDialog by remember { mutableStateOf(false) }
+
     var showBookmarks by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showLobDialog by remember { mutableStateOf(false) }
@@ -2104,7 +2107,8 @@ fun ReaderScreen(reader: Reader) {
                                         },
                                         onDone = { apkFile ->
                                             isAppUpdating = false
-                                            installDownloadedApkUri(ctx, Uri.fromFile(apkFile), apkFile)
+                                            downloadedApkFile = apkFile
+                                            showDownloadedInstructionDialog = true
                                         },
                                         onError = { err ->
                                             isAppUpdating = false
@@ -2123,6 +2127,55 @@ fun ReaderScreen(reader: Reader) {
                 dismissButton = {
                     TextButton(onClick = { showUpdateInfoDialog = false }) {
                         Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        if (showDownloadedInstructionDialog && downloadedApkFile != null) {
+            val apkFile = downloadedApkFile!!
+            AlertDialog(
+                onDismissRequest = { showDownloadedInstructionDialog = false },
+                title = { Text("Update Downloaded!") },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Saved to Downloads/PdfHelperReader_files/${apkFile.name}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+
+                        Text("How to Install:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "1. Simply uninstall the current app.\n2. Tap ${apkFile.name} in Downloads/PdfHelperReader_files/ to install.\n\nAll your reading history, bookmarks, and settings are preserved on disk!",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showDownloadedInstructionDialog = false
+                            installDownloadedApkUri(ctx, Uri.fromFile(apkFile), apkFile)
+                        }
+                    ) {
+                        Text("Install Now")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDownloadedInstructionDialog = false }) {
+                        Text("OK")
                     }
                 }
             )
@@ -3340,12 +3393,12 @@ suspend fun downloadAppUpdateApk(
 ) {
     withContext(Dispatchers.IO) {
         try {
-            val targetDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.getExternalFilesDir(null) ?: ctx.filesDir
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val targetDir = File(downloadsDir, "PdfHelperReader_files")
             if (!targetDir.exists()) targetDir.mkdirs()
 
-            targetDir.listFiles { f -> f.name.startsWith("PdfHelperReader_update") }?.forEach { it.delete() }
-
-            val updateApkFile = File(targetDir, "PdfHelperReader_update_${System.currentTimeMillis()}.apk")
+            val updateApkFile = File(targetDir, "PdfHelperReader-v2.5.0.apk")
+            if (updateApkFile.exists()) updateApkFile.delete()
 
             val url = java.net.URL(downloadUrl)
             val conn = url.openConnection() as java.net.HttpURLConnection
