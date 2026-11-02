@@ -795,7 +795,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v8", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v9", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -803,7 +803,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v8", true) }
+                editPrefs { putBoolean("default_book_extracted_v9", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -2330,38 +2330,87 @@ fun ReaderScreen(reader: Reader) {
             Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
                 Row(
                     Modifier.fillMaxWidth().height(topBarHeight).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    val pad = PaddingValues(horizontal = 4.dp)
-                    
-                    TextButton(
+                    var btnIndex = 0
+
+                    @Composable
+                    fun RibbonBtn(
+                        onClick: () -> Unit,
+                        enabled: Boolean = true,
+                        text: String,
+                        textColor: androidx.compose.ui.graphics.Color? = null,
+                        content: (@Composable () -> Unit)? = null
+                    ) {
+                        val currIdx = btnIndex++
+                        val tealContainer = androidx.compose.ui.graphics.Color(0xFF98E8DE)
+                        val tealOnContainer = androidx.compose.ui.graphics.Color(0xFF003733)
+
+                        val containerColor = if (currIdx % 2 == 0) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            tealContainer
+                        }
+                        val contentColor = textColor ?: if (currIdx % 2 == 0) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            tealOnContainer
+                        }
+
+                        FilledTonalButton(
+                            onClick = onClick,
+                            enabled = enabled,
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.height(28.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = containerColor,
+                                contentColor = contentColor
+                            )
+                        ) {
+                            if (content != null) {
+                                content()
+                            } else {
+                                Text(text = text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    RibbonBtn(
                         enabled = reader.book.doc != null,
                         onClick = {
                             reader.addBookmark()
                             Toast.makeText(ctx, "Bookmarked!", Toast.LENGTH_SHORT).show()
                         },
-                        contentPadding = pad
-                    ) { Text("B") }
+                        text = "B"
+                    )
 
-                    TextButton(onClick = { showBookmarks = true }, contentPadding = pad) { Text("BL") }
+                    RibbonBtn(
+                        onClick = { showBookmarks = true },
+                        text = "BL"
+                    )
 
-                    TextButton(onClick = {
-                        splitMode = when (splitMode) {
-                            SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
-                            SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
-                            SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
-                        }
-                    }, contentPadding = pad) {
-                        Text(when (splitMode) {
+                    RibbonBtn(
+                        onClick = {
+                            splitMode = when (splitMode) {
+                                SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
+                                SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
+                                SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
+                            }
+                        },
+                        text = when (splitMode) {
                             SplitMode.SPLIT_BOTH -> "Both"
                             SplitMode.ONLY_BOOK -> "Book"
                             SplitMode.ONLY_VOCAB -> "Vocab"
-                        })
-                    }
+                        }
+                    )
 
-                    TextButton(onClick = { isZenMode = true }, contentPadding = pad) { Text("Z") }
+                    RibbonBtn(
+                        onClick = { isZenMode = true },
+                        text = "Z"
+                    )
 
-                    TextButton(
+                    RibbonBtn(
                         enabled = reader.book.doc != null && isVocabPdfActive && isContinuousMode && isPdfViewMode,
                         onClick = {
                             isSyncedReading = !isSyncedReading
@@ -2385,29 +2434,19 @@ fun ReaderScreen(reader: Reader) {
                             }
                             Toast.makeText(ctx, if (isSyncedReading) "Synced Reading ON (Synced!)" else "Synced Reading OFF", Toast.LENGTH_SHORT).show()
                         },
-                        contentPadding = pad
-                    ) {
-                        Text(
-                            text = if (isSyncedReading && isVocabPdfActive && isContinuousMode && isPdfViewMode) "SR: On" else "SR: Off",
-                            color = if (isSyncedReading && isVocabPdfActive && isContinuousMode && isPdfViewMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                        text = if (isSyncedReading && isVocabPdfActive && isContinuousMode && isPdfViewMode) "SR: On" else "SR: Off"
+                    )
 
-                    TextButton(
+                    RibbonBtn(
                         enabled = reader.book.doc != null && isContinuousMode && isPdfViewMode,
                         onClick = {
                             isAutoScroll = !isAutoScroll
                             Toast.makeText(ctx, if (isAutoScroll) "Auto Scroll ON (1 height / 5 min)" else "Auto Scroll OFF", Toast.LENGTH_SHORT).show()
                         },
-                        contentPadding = pad
-                    ) {
-                        Text(
-                            text = if (isAutoScroll && isContinuousMode && isPdfViewMode) "AS: On" else "AS: Off",
-                            color = if (isAutoScroll && isContinuousMode && isPdfViewMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                        text = if (isAutoScroll && isContinuousMode && isPdfViewMode) "AS: On" else "AS: Off"
+                    )
 
-                    TextButton(
+                    RibbonBtn(
                         enabled = reader.book.doc != null && isVocabPdfActive,
                         onClick = {
                             val bookDoc = reader.book.doc
@@ -2427,90 +2466,102 @@ fun ReaderScreen(reader: Reader) {
                                 Toast.makeText(ctx, "Open both book and vocab documents to sync", Toast.LENGTH_SHORT).show()
                             }
                         },
-                        contentPadding = pad
-                    ) { Text("Sync") }
+                        text = "Sync"
+                    )
 
-                    TextButton(onClick = {
-                        reader.vocabMode = when (reader.vocabMode) {
-                            VocabMode.VOCAB_PDF -> VocabMode.GOOGLE_WEB
-                            VocabMode.GOOGLE_WEB -> {
-                                isSyncedReading = false
-                                VocabMode.VOCAB_PDF
+                    RibbonBtn(
+                        onClick = {
+                            reader.vocabMode = when (reader.vocabMode) {
+                                VocabMode.VOCAB_PDF -> {
+                                    if (splitMode != SplitMode.SPLIT_BOTH) {
+                                        splitMode = SplitMode.SPLIT_BOTH
+                                    }
+                                    VocabMode.GOOGLE_WEB
+                                }
+                                VocabMode.GOOGLE_WEB -> {
+                                    isSyncedReading = false
+                                    VocabMode.VOCAB_PDF
+                                }
                             }
-                        }
-                        if (reader.vocabMode == VocabMode.GOOGLE_WEB) {
-                            isSyncedReading = false
-                        }
-                    }, contentPadding = pad) {
-                        Text(when (reader.vocabMode) {
+                            if (reader.vocabMode == VocabMode.GOOGLE_WEB) {
+                                isSyncedReading = false
+                            }
+                        },
+                        text = when (reader.vocabMode) {
                             VocabMode.VOCAB_PDF -> "G:Vocab"
                             VocabMode.GOOGLE_WEB -> "G:Google"
-                        })
-                    }
-
-                    TextButton(onClick = { reader.toggleDarkMode() }, contentPadding = pad) { Text("T") }
-
-                    TextButton(onClick = {
-                        reader.book.readingMode = when (reader.book.readingMode) {
-                            ReadingMode.PAGE_BY_PAGE -> ReadingMode.CONTINUOUS
-                            ReadingMode.CONTINUOUS -> {
-                                isAutoScroll = false
-                                isSyncedReading = false
-                                ReadingMode.PAGE_BY_PAGE
-                            }
                         }
-                        reader.vocab.readingMode = reader.book.readingMode
-                    }, contentPadding = pad) {
-                        Text(when (reader.book.readingMode) {
+                    )
+
+                    RibbonBtn(
+                        onClick = { reader.toggleDarkMode() },
+                        text = "T"
+                    )
+
+                    RibbonBtn(
+                        onClick = {
+                            reader.book.readingMode = when (reader.book.readingMode) {
+                                ReadingMode.PAGE_BY_PAGE -> ReadingMode.CONTINUOUS
+                                ReadingMode.CONTINUOUS -> {
+                                    isAutoScroll = false
+                                    isSyncedReading = false
+                                    ReadingMode.PAGE_BY_PAGE
+                                }
+                            }
+                            reader.vocab.readingMode = reader.book.readingMode
+                        },
+                        text = when (reader.book.readingMode) {
                             ReadingMode.PAGE_BY_PAGE -> "R:P"
                             ReadingMode.CONTINUOUS -> "R:C"
-                        })
-                    }
-
-                    TextButton(onClick = {
-                        reader.book.viewMode = when (reader.book.viewMode) {
-                            ViewMode.PDF_VIEW -> {
-                                isAutoScroll = false
-                                isSyncedReading = false
-                                ViewMode.TEXT_VIEW
-                            }
-                            ViewMode.TEXT_VIEW -> ViewMode.PDF_VIEW
                         }
-                        reader.vocab.viewMode = reader.book.viewMode
-                    }, contentPadding = pad) {
-                        Text(when (reader.book.viewMode) {
+                    )
+
+                    RibbonBtn(
+                        onClick = {
+                            reader.book.viewMode = when (reader.book.viewMode) {
+                                ViewMode.PDF_VIEW -> {
+                                    isAutoScroll = false
+                                    isSyncedReading = false
+                                    ViewMode.TEXT_VIEW
+                                }
+                                ViewMode.TEXT_VIEW -> ViewMode.PDF_VIEW
+                            }
+                            reader.vocab.viewMode = reader.book.viewMode
+                        },
+                        text = when (reader.book.viewMode) {
                             ViewMode.PDF_VIEW -> "V:PDF"
                             ViewMode.TEXT_VIEW -> "V:TXT"
-                        })
-                    }
+                        }
+                    )
 
-                    TextButton(onClick = { showHistory = true }, contentPadding = pad) { Text("H") }
+                    RibbonBtn(
+                        onClick = { showHistory = true },
+                        text = "H"
+                    )
 
                     if (reader.book.doc != null) {
-                        TextButton(onClick = { showOcrConfirmDialog = true }, contentPadding = pad) { Text("O") }
+                        RibbonBtn(
+                            onClick = { showOcrConfirmDialog = true },
+                            text = "O"
+                        )
                     }
 
-                    TextButton(onClick = { showLobDialog = true }, contentPadding = pad) { Text("LOB") }
+                    RibbonBtn(
+                        onClick = { showLobDialog = true },
+                        text = "LOB"
+                    )
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    FilledTonalButton(
+                    RibbonBtn(
                         onClick = { pickBook.launch(DOCUMENT_MIMES) },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) { Text("OB") }
+                        text = "OB"
+                    )
 
-                    Spacer(modifier = Modifier.width(4.dp))
-
-                    FilledTonalButton(
+                    RibbonBtn(
                         onClick = { pickVocab.launch(DOCUMENT_MIMES) },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) { Text("OV") }
+                        text = "OV"
+                    )
 
-                    Spacer(modifier = Modifier.width(4.dp))
-
-                    FilledTonalButton(
+                    RibbonBtn(
                         onClick = {
                             if (reader.book.doc == null) {
                                 Toast.makeText(ctx, "Please open a book first", Toast.LENGTH_SHORT).show()
@@ -2518,15 +2569,12 @@ fun ReaderScreen(reader: Reader) {
                                 generateVocabAction()
                             }
                         },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) { Text("LV") }
+                        text = "LV"
+                    )
 
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    FilledTonalButton(
+                    RibbonBtn(
                         onClick = {
-                            if (isAppUpdating || isCheckingUpdateInfo) return@FilledTonalButton
+                            if (isAppUpdating || isCheckingUpdateInfo) return@RibbonBtn
                             isCheckingUpdateInfo = true
                             scope.launch {
                                 try {
@@ -2540,25 +2588,20 @@ fun ReaderScreen(reader: Reader) {
                                 }
                             }
                         },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) {
-                        if (isCheckingUpdateInfo) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text("Update")
+                        text = "Update",
+                        content = {
+                            if (isCheckingUpdateInfo) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text("Update", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
                         }
-                    }
+                    )
 
-                    Spacer(modifier = Modifier.width(4.dp))
-
-                    FilledTonalButton(
+                    RibbonBtn(
                         onClick = { showAppInfoDialog = true },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) {
-                        Text("App Info")
-                    }
+                        text = "App Info"
+                    )
                 }
                 HorizontalDivider()
 
@@ -2869,10 +2912,15 @@ fun PdfPane(
                                 text = "G",
                                 modifier = Modifier.clickable {
                                     reader.vocabMode = when (reader.vocabMode) {
-                                        VocabMode.VOCAB_PDF -> VocabMode.GOOGLE_WEB
+                                        VocabMode.VOCAB_PDF -> {
+                                            if (splitMode != SplitMode.SPLIT_BOTH) {
+                                                onToggleSplitMode()
+                                            }
+                                            VocabMode.GOOGLE_WEB
+                                        }
                                         VocabMode.GOOGLE_WEB -> VocabMode.VOCAB_PDF
                                     }
-                                    Toast.makeText(ctx, "Google Mode toggled", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, if (reader.vocabMode == VocabMode.GOOGLE_WEB) "Google Mode ON (Split View)" else "Google Mode OFF", Toast.LENGTH_SHORT).show()
                                 }.padding(vertical = 1.dp, horizontal = 2.dp),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
