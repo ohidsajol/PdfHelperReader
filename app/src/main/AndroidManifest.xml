@@ -17,7 +17,7 @@
         android:theme="@style/Theme.DualPdf">
 
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name="com.example.dualpdf.GenericFileProvider"
             android:authorities="com.example.pdfhelperreader.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">

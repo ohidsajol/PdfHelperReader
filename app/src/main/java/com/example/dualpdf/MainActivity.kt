@@ -3372,13 +3372,13 @@ fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
         val contentUri = try {
             androidx.core.content.FileProvider.getUriForFile(
                 ctx,
-                "${ctx.packageName}.fileprovider",
+                "com.example.pdfhelperreader.fileprovider",
                 apkFile.canonicalFile
             )
         } catch (e: Exception) {
             androidx.core.content.FileProvider.getUriForFile(
                 ctx,
-                "${ctx.packageName}.fileprovider",
+                "com.example.pdfhelperreader.fileprovider",
                 apkFile
             )
         }
