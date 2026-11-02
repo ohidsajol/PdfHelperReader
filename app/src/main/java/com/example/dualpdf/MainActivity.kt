@@ -2149,7 +2149,7 @@ fun ReaderScreen(reader: Reader) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Saved to Downloads/PdfHelperReader_files/${apkFile.name}",
+                                text = "Saved to Downloads/${apkFile.name}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -2159,7 +2159,7 @@ fun ReaderScreen(reader: Reader) {
 
                         Text("How to Install:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         Text(
-                            "1. Simply uninstall the current app.\n2. Tap ${apkFile.name} in Downloads/PdfHelperReader_files/ to install.\n\nAll your reading history, bookmarks, and settings are preserved on disk!",
+                            "1. Simply uninstall the current app.\n2. Tap ${apkFile.name} in your Downloads folder to install.\n\nAll your reading history, bookmarks, and settings are preserved on disk!",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -3424,10 +3424,9 @@ suspend fun downloadAppUpdateApk(
     withContext(Dispatchers.IO) {
         try {
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val targetDir = File(downloadsDir, "PdfHelperReader_files")
-            if (!targetDir.exists()) targetDir.mkdirs()
+            if (!downloadsDir.exists()) downloadsDir.mkdirs()
 
-            val updateApkFile = File(targetDir, "PdfHelperReader-v2.5.0.apk")
+            val updateApkFile = File(downloadsDir, "PdfHelperReader-v2.8.0.apk")
             if (updateApkFile.exists()) updateApkFile.delete()
 
             val url = java.net.URL(downloadUrl)
