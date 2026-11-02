@@ -1,4 +1,4 @@
-# PdfHelperReader (v2.6.0)
+# PdfHelperReader (v2.7.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -9,11 +9,10 @@
 
 ---
 
-## 🌟 Key Features in v2.6.0
+## 🌟 Key Features in v2.7.0
 
-### 🎨 Alternating `#98E8DE` Ribbon Styling & Smart Dual-Pane Switching
-* **Alternating Tonal Buttons**: Upper action ribbon buttons dynamically alternate between `primaryContainer` and vibrant `#98E8DE` (Soft Teal) Material 3 container themes.
-* **Auto Dual-Pane Google Mode**: Toggling Google Search mode (`G:Vocab` $\rightarrow$ `G:Google` or Zen Mode `G` button) in Single Document Mode automatically switches the layout to **Dual-Pane Split View** (`SPLIT_BOTH`), immediately displaying the Google Search engine alongside your active book.
+### 🎨 Alternating `#00796B` Font Color Styling
+* **Alternating Font Text Colors**: Upper action ribbon buttons keep their original clean button styling untouched while dynamically alternating button **font text colors** between `primary` and vibrant `#00796B` (Teal) for an elegant, high-contrast typography experience.
 
 ### 🔄 In-App App Updates (`Update` Button)
 * **One-Tap Release Updates**: Rightmost `Update` button checks GitHub's latest release API (`/releases/latest`), compares installed version against GitHub latest release, and streams live download progress bytes (`Progress: 45% (13.2 MB / 29.0 MB)`).

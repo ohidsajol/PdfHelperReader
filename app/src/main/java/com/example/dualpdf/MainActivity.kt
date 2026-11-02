@@ -2344,34 +2344,30 @@ fun ReaderScreen(reader: Reader) {
                         content: (@Composable () -> Unit)? = null
                     ) {
                         val currIdx = btnIndex++
-                        val tealContainer = androidx.compose.ui.graphics.Color(0xFF98E8DE)
-                        val tealOnContainer = androidx.compose.ui.graphics.Color(0xFF003733)
+                        val defaultFontCol = MaterialTheme.colorScheme.primary
+                        val tealFontCol = androidx.compose.ui.graphics.Color(0xFF00796B)
 
-                        val containerColor = if (currIdx % 2 == 0) {
-                            MaterialTheme.colorScheme.primaryContainer
+                        val fontColor = textColor ?: if (currIdx % 2 == 0) {
+                            defaultFontCol
                         } else {
-                            tealContainer
-                        }
-                        val contentColor = textColor ?: if (currIdx % 2 == 0) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            tealOnContainer
+                            tealFontCol
                         }
 
-                        FilledTonalButton(
+                        TextButton(
                             onClick = onClick,
                             enabled = enabled,
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier.height(28.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = containerColor,
-                                contentColor = contentColor
-                            )
+                            contentPadding = PaddingValues(horizontal = 4.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = fontColor)
                         ) {
                             if (content != null) {
                                 content()
                             } else {
-                                Text(text = text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = text,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = fontColor
+                                )
                             }
                         }
                     }
