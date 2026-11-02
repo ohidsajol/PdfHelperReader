@@ -3390,28 +3390,34 @@ fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
 
         pendingApkToInstall = null
 
-        val contentUri = try {
-            androidx.core.content.FileProvider.getUriForFile(
-                ctx,
-                "${ctx.packageName}.fileprovider",
-                apkFile.canonicalFile
-            )
-        } catch (e: Exception) {
-            androidx.core.content.FileProvider.getUriForFile(
-                ctx,
-                "${ctx.packageName}.fileprovider",
-                apkFile
-            )
+        val packageInstaller = ctx.packageManager.packageInstaller
+        val params = android.content.pm.PackageInstaller.SessionParams(
+            android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL
+        )
+        params.setAppPackageName(ctx.packageName)
+
+        val sessionId = packageInstaller.createSession(params)
+        val session = packageInstaller.openSession(sessionId)
+
+        session.openWrite("package_update", 0, apkFile.length()).use { out ->
+            apkFile.inputStream().use { input ->
+                input.copyTo(out)
+            }
+            session.fsync(out)
         }
 
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(contentUri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val callbackIntent = Intent(ctx, MainActivity::class.java).apply {
+            action = "ACTION_INSTALL_COMPLETE"
         }
-        ctx.startActivity(intent)
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            ctx,
+            sessionId,
+            callbackIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
+        )
+
+        session.commit(pendingIntent.intentSender)
+        session.close()
     } catch (e: Exception) {
         e.printStackTrace()
         Toast.makeText(ctx, "Install error: ${e.javaClass.simpleName} - ${e.message}", Toast.LENGTH_LONG).show()
