@@ -3303,8 +3303,10 @@ fun startDownloadManagerUpdate(ctx: Context, apkDownloadUrl: String, title: Stri
         val targetDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.getExternalFilesDir(null) ?: ctx.filesDir
         if (!targetDir.exists()) targetDir.mkdirs()
 
-        val updateApkFile = File(targetDir, "PdfHelperReader_update.apk")
-        if (updateApkFile.exists()) updateApkFile.delete()
+        // Clean up older update APKs in targetDir
+        targetDir.listFiles { f -> f.name.startsWith("PdfHelperReader_update") }?.forEach { it.delete() }
+
+        val updateApkFile = File(targetDir, "PdfHelperReader_update_${System.currentTimeMillis()}.apk")
 
         val downloadManager = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
             ?: throw IOException("DownloadManager service unavailable")
@@ -3328,10 +3330,29 @@ fun startDownloadManagerUpdate(ctx: Context, apkDownloadUrl: String, title: Stri
                         c?.unregisterReceiver(this)
                     } catch (e: Exception) {}
 
-                    val installUri = downloadManager.getUriForDownloadedFile(downloadId)
-                        ?: Uri.fromFile(updateApkFile)
+                    var realApkFile = updateApkFile
+                    try {
+                        val query = android.app.DownloadManager.Query().setFilterById(downloadId)
+                        val cursor = downloadManager.query(query)
+                        if (cursor != null && cursor.moveToFirst()) {
+                            val localUriIdx = cursor.getColumnIndex(android.app.DownloadManager.COLUMN_LOCAL_URI)
+                            if (localUriIdx != -1) {
+                                val localUriStr = cursor.getString(localUriIdx)
+                                if (!localUriStr.isNullOrBlank()) {
+                                    val f = File(Uri.parse(localUriStr).path ?: "")
+                                    if (f.exists() && f.length() > 1000) {
+                                        realApkFile = f
+                                    }
+                                }
+                            }
+                            cursor.close()
+                        }
+                    } catch (e: Exception) {}
 
-                    installDownloadedApkUri(c ?: ctx, installUri, updateApkFile)
+                    val installUri = downloadManager.getUriForDownloadedFile(downloadId)
+                        ?: Uri.fromFile(realApkFile)
+
+                    installDownloadedApkUri(c ?: ctx, installUri, realApkFile)
                 }
             }
         }
