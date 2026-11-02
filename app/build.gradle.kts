@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.pdfhelperreader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "2.9.1"
+        versionCode = 9
+        versionName = "3.0.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

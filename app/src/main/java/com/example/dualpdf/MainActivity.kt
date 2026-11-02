@@ -3464,10 +3464,6 @@ suspend fun downloadAppUpdateApk(
                     updateApkFile.setWritable(true, false)
                 }
 
-                android.media.MediaScannerConnection.scanFile(
-                    ctx, arrayOf(updateApkFile.absolutePath), arrayOf("application/vnd.android.package-archive"), null
-                )
-
                 withContext(Dispatchers.Main) {
                     onDone(updateApkFile)
                 }

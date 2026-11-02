@@ -1,4 +1,4 @@
-# PdfHelperReader (v2.9.1)
+# PdfHelperReader (v3.0.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -9,10 +9,15 @@
 
 ---
 
-## 🌟 Key Features in v2.9.1
+## 🌟 Key Features in v3.0.0
 
-### 🔄 Streamed File-Descriptor Sync & Clean File Handle Release
-* **Instant First-Attempt File Deletion/Move**: Explicitly flushes, syncs file descriptors (`fos.fd.sync()`), closes output streams, and disconnects HTTP connections immediately upon download completion, releasing all file handle locks so downloaded update APKs can be deleted or moved on the **very first attempt** without `"couldn't move, error unknown"`.
+### 🚀 Instant First-Attempt File Deletion & Clean Trash Operations
+* **Zero MediaStore Locks**: Disables background MediaStore indexing scans on update APK files, preventing Android's `MediaProvider` SQLite transaction locks so downloaded update files can be deleted or moved to trash on the **very first attempt** without `"couldn't move to trash... error unknown"`.
+
+### 🔄 Clean User-Controlled Update Flow
+* **One-Tap Release Updates**: Rightmost `Update` button checks GitHub's latest release API (`/releases/latest`), compares installed version against GitHub latest release, and streams live download progress bytes (`Progress: 45% (13.2 MB / 29.0 MB)`).
+* **Direct `Downloads/` Destination**: Downloads the release APK file directly to your phone's main **`Downloads/`** folder (`Downloads/PdfHelperReader-v3.0.0.apk`).
+* **Clear Single-Button Instruction Dialog**: Displays an informative instruction dialog with a single **[ OK ]** button, explaining how to install the update by tapping the file in your Downloads folder while preserving 100% of your history and bookmarks.
 
 ### 🎨 Alternating `#00796B` Font Color Styling
 * **Alternating Font Text Colors**: Upper action ribbon buttons keep their original clean button styling untouched while dynamically alternating button **font text colors** between `primary` and vibrant `#00796B` (Teal) for an elegant, high-contrast typography experience.
