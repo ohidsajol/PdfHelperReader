@@ -1,15 +1,23 @@
-# PdfHelperReader (v2.3.0)
+# PdfHelperReader (v2.4.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK: 26](https://img.shields.io/badge/Min%20SDK-26-blue.svg)](https://android-arsenal.com/api?level=26)
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
-**PdfHelperReader** is a powerful, offline-first, dual-pane Android document reader designed specifically to assist users in reading foreign or complex literature. It reads both **PDF** and **EPUB** eBooks, automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, searches Project Gutenberg's 70,000+ catalog, and provides a seamless dual-document reading experience with synchronized state persistence and immersive reading modes.
+**PdfHelperReader** is a powerful, offline-first, dual-pane Android document reader designed specifically to assist users in reading foreign or complex literature. It reads both **PDF** and **EPUB** eBooks, automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, searches Project Gutenberg's 70,000+ catalog, includes seamless **in-app updates**, and provides a dual-document reading experience with synchronized state persistence and immersive reading modes.
 
 ---
 
-## 🌟 Key Features in v2.3.0
+## 🌟 Key Features in v2.4.0
+
+### 🔄 In-App App Updates (`Update` Button)
+* **One-Tap Release Updates**: Rightmost `Update` button checks GitHub's latest release API (`/releases/latest`), compares installed version against GitHub latest release, and streams live download progress bytes (`Progress: 45% (13.2 MB / 29.0 MB)`).
+* **Native System DownloadManager & FileProvider**: Uses Android's system `DownloadManager` and `FileProvider` (`com.example.pdfhelperreader.fileprovider`) to launch Android's Package Installer seamlessly with 0 errors across API 26-35.
+* **Auto-Resume Installation**: Automatically detects when "Allow unknown app installs" permission is granted and launches the Package Installer popup immediately upon returning to the app!
+
+### ℹ️ App & Developer Info (`App Info` Button)
+* Displays developer details (**Ohid Sajol**), GitHub repository URL (`github.com/ohidsajol/PdfHelperReader`), version info, and full application overview.
 
 ### 📚 Expanded Online Library & Gutenberg Search (`LOB` Button)
 * **Dual-Tab Source Selection**:
