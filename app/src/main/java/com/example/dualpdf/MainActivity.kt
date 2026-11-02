@@ -1741,6 +1741,7 @@ fun ReaderScreen(reader: Reader) {
 
     Surface(Modifier.fillMaxSize()) {
         if (showAppInfoDialog) {
+            val currentVer = remember { getCurrentAppVersionName(ctx) }
             AlertDialog(
                 onDismissRequest = { showAppInfoDialog = false },
                 title = { Text("App & Developer Info") },
@@ -1755,7 +1756,7 @@ fun ReaderScreen(reader: Reader) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                Text("DualPDF Reader (v2.3.0)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Text("DualPDF Reader ($currentVer)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                                 Text("Advanced Dual-Pane eBook & Vocabulary Reader", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                             }
                         }
@@ -2056,6 +2057,7 @@ fun ReaderScreen(reader: Reader) {
             )
         }
 
+        val currentVer = remember { getCurrentAppVersionName(ctx) }
         if (showUpdateInfoDialog && appUpdateInfo != null) {
             val info = appUpdateInfo!!
             AlertDialog(
@@ -2076,7 +2078,7 @@ fun ReaderScreen(reader: Reader) {
                                 modifier = Modifier.padding(12.dp)
                             )
                         }
-                        Text("Installed Version: v2.3.0", style = MaterialTheme.typography.bodyMedium)
+                        Text("Installed Version: $currentVer", style = MaterialTheme.typography.bodyMedium)
                         Text("GitHub Latest Tag: ${info.latestTag}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                         if (info.releaseNotes.isNotBlank()) {
                             Spacer(Modifier.height(4.dp))
@@ -2095,7 +2097,7 @@ fun ReaderScreen(reader: Reader) {
                             }
                         }
                     ) {
-                        Text(if (info.isNewerAvailable) "Update Now" else "Re-install v2.3.0")
+                        Text(if (info.isNewerAvailable) "Update Now" else "Re-install $currentVer")
                     }
                 },
                 dismissButton = {
@@ -2455,7 +2457,8 @@ fun ReaderScreen(reader: Reader) {
                             isCheckingUpdateInfo = true
                             scope.launch {
                                 try {
-                                    appUpdateInfo = checkAppUpdateInfo(ctx, "v2.3.0")
+                                    val currentVer = getCurrentAppVersionName(ctx)
+                                    appUpdateInfo = checkAppUpdateInfo(ctx, currentVer)
                                     showUpdateInfoDialog = true
                                 } catch (e: Exception) {
                                     Toast.makeText(ctx, "Update check failed: ${e.message}", Toast.LENGTH_LONG).show()
@@ -3254,6 +3257,16 @@ suspend fun fetchGutenbergBooks(query: String? = null): List<GutenbergBookItem> 
     }
 }
 
+fun getCurrentAppVersionName(ctx: Context): String {
+    return try {
+        val pInfo = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        val vName = pInfo.versionName ?: "2.4.0"
+        if (vName.startsWith("v")) vName else "v$vName"
+    } catch (e: Exception) {
+        "v2.4.0"
+    }
+}
+
 data class AppUpdateInfo(
     val latestTag: String,
     val releaseTitle: String,
@@ -3262,7 +3275,7 @@ data class AppUpdateInfo(
     val isNewerAvailable: Boolean
 )
 
-suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = "v2.3.0"): AppUpdateInfo = withContext(Dispatchers.IO) {
+suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrentAppVersionName(ctx)): AppUpdateInfo = withContext(Dispatchers.IO) {
     val githubApiUrl = "https://api.github.com/repos/ohidsajol/PdfHelperReader/releases/latest"
     val url = java.net.URL(githubApiUrl)
     val conn = url.openConnection() as java.net.HttpURLConnection
