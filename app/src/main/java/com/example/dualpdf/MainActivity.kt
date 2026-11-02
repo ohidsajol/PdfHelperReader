@@ -2166,16 +2166,8 @@ fun ReaderScreen(reader: Reader) {
                 },
                 confirmButton = {
                     Button(
-                        onClick = {
-                            showDownloadedInstructionDialog = false
-                            installDownloadedApkUri(ctx, Uri.fromFile(apkFile), apkFile)
-                        }
+                        onClick = { showDownloadedInstructionDialog = false }
                     ) {
-                        Text("Install Now")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDownloadedInstructionDialog = false }) {
                         Text("OK")
                     }
                 }
