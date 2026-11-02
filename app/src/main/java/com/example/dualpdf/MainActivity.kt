@@ -3370,10 +3370,20 @@ fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
 
         pendingApkToInstall = null
 
-        val finalUri = if (apkUri.scheme == "content") apkUri else {
+        val finalUri = try {
+            if (apkUri.scheme == "content") {
+                apkUri
+            } else {
+                androidx.core.content.FileProvider.getUriForFile(
+                    ctx,
+                    "${ctx.packageName}.fileprovider",
+                    apkFile
+                )
+            }
+        } catch (e: Exception) {
             androidx.core.content.FileProvider.getUriForFile(
                 ctx,
-                "com.example.pdfhelperreader.fileprovider",
+                "${ctx.packageName}.fileprovider",
                 apkFile
             )
         }
