@@ -2091,7 +2091,27 @@ fun ReaderScreen(reader: Reader) {
                         onClick = {
                             showUpdateInfoDialog = false
                             if (info.apkDownloadUrl.isNotBlank()) {
-                                startDownloadManagerUpdate(ctx, info.apkDownloadUrl, info.releaseTitle)
+                                isAppUpdating = true
+                                updateProgressCurrent = 0
+                                updateProgressTotal = 0
+                                scope.launch {
+                                    downloadAppUpdateApk(
+                                        ctx = ctx,
+                                        downloadUrl = info.apkDownloadUrl,
+                                        onProgress = { current, total ->
+                                            updateProgressCurrent = current
+                                            updateProgressTotal = total
+                                        },
+                                        onDone = { apkFile ->
+                                            isAppUpdating = false
+                                            installDownloadedApkUri(ctx, Uri.fromFile(apkFile), apkFile)
+                                        },
+                                        onError = { err ->
+                                            isAppUpdating = false
+                                            Toast.makeText(ctx, "Download error: ${err.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    )
+                                }
                             } else {
                                 Toast.makeText(ctx, "No APK asset found in release.", Toast.LENGTH_LONG).show()
                             }
@@ -3308,6 +3328,63 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrent
         AppUpdateInfo(latestTag, releaseTitle, releaseNotes, apkDownloadUrl, isNewer)
     } else {
         throw IOException("GitHub API returned HTTP ${conn.responseCode}")
+    }
+}
+
+suspend fun downloadAppUpdateApk(
+    ctx: Context,
+    downloadUrl: String,
+    onProgress: (Int, Int) -> Unit,
+    onDone: (File) -> Unit,
+    onError: (Exception) -> Unit
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            val targetDir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.getExternalFilesDir(null) ?: ctx.filesDir
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            targetDir.listFiles { f -> f.name.startsWith("PdfHelperReader_update") }?.forEach { it.delete() }
+
+            val updateApkFile = File(targetDir, "PdfHelperReader_update_${System.currentTimeMillis()}.apk")
+
+            val url = java.net.URL(downloadUrl)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            conn.connectTimeout = 12000
+            conn.readTimeout = 20000
+            conn.instanceFollowRedirects = true
+
+            if (conn.responseCode in 200..399) {
+                val totalBytes = conn.contentLength
+                var downloadedBytes = 0
+
+                updateApkFile.outputStream().use { output ->
+                    conn.inputStream.use { input ->
+                        val buffer = ByteArray(8192)
+                        var read = input.read(buffer)
+                        while (read != -1) {
+                            output.write(buffer, 0, read)
+                            downloadedBytes += read
+                            withContext(Dispatchers.Main) {
+                                onProgress(downloadedBytes, totalBytes)
+                            }
+                            read = input.read(buffer)
+                        }
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    onDone(updateApkFile)
+                }
+            } else {
+                throw IOException("Server returned HTTP ${conn.responseCode}")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onError(e)
+            }
+        }
     }
 }
 
