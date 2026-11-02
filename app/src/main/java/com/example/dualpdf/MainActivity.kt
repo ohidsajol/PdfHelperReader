@@ -3414,15 +3414,19 @@ suspend fun downloadAppUpdateApk(
     onError: (Exception) -> Unit
 ) {
     withContext(Dispatchers.IO) {
+        var conn: java.net.HttpURLConnection? = null
         try {
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (!downloadsDir.exists()) downloadsDir.mkdirs()
 
-            val updateApkFile = File(downloadsDir, "PdfHelperReader-v2.8.0.apk")
-            if (updateApkFile.exists()) updateApkFile.delete()
+            val currentVer = getCurrentAppVersionName(ctx)
+            val updateApkFile = File(downloadsDir, "PdfHelperReader-$currentVer.apk")
+            if (updateApkFile.exists()) {
+                runCatching { updateApkFile.delete() }
+            }
 
             val url = java.net.URL(downloadUrl)
-            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn = url.openConnection() as java.net.HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             conn.connectTimeout = 12000
@@ -3433,12 +3437,13 @@ suspend fun downloadAppUpdateApk(
                 val totalBytes = conn.contentLength
                 var downloadedBytes = 0
 
-                updateApkFile.outputStream().use { output ->
+                val fos = updateApkFile.outputStream()
+                try {
                     conn.inputStream.use { input ->
                         val buffer = ByteArray(8192)
                         var read = input.read(buffer)
                         while (read != -1) {
-                            output.write(buffer, 0, read)
+                            fos.write(buffer, 0, read)
                             downloadedBytes += read
                             withContext(Dispatchers.Main) {
                                 onProgress(downloadedBytes, totalBytes)
@@ -3446,7 +3451,22 @@ suspend fun downloadAppUpdateApk(
                             read = input.read(buffer)
                         }
                     }
+                    fos.flush()
+                    try {
+                        fos.fd.sync()
+                    } catch (e: Exception) {}
+                } finally {
+                    runCatching { fos.close() }
                 }
+
+                runCatching {
+                    updateApkFile.setReadable(true, false)
+                    updateApkFile.setWritable(true, false)
+                }
+
+                android.media.MediaScannerConnection.scanFile(
+                    ctx, arrayOf(updateApkFile.absolutePath), arrayOf("application/vnd.android.package-archive"), null
+                )
 
                 withContext(Dispatchers.Main) {
                     onDone(updateApkFile)
@@ -3458,6 +3478,8 @@ suspend fun downloadAppUpdateApk(
             withContext(Dispatchers.Main) {
                 onError(e)
             }
+        } finally {
+            runCatching { conn?.disconnect() }
         }
     }
 }
