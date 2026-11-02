@@ -3390,27 +3390,24 @@ fun installDownloadedApkUri(ctx: Context, apkUri: Uri, apkFile: File) {
 
         pendingApkToInstall = null
 
-        val finalUri = if (apkUri.scheme == "content") {
-            apkUri
-        } else {
-            try {
-                androidx.core.content.FileProvider.getUriForFile(
-                    ctx,
-                    "com.example.pdfhelperreader.fileprovider",
-                    apkFile.canonicalFile
-                )
-            } catch (e: Exception) {
-                androidx.core.content.FileProvider.getUriForFile(
-                    ctx,
-                    "com.example.pdfhelperreader.fileprovider",
-                    apkFile
-                )
-            }
+        val contentUri = try {
+            androidx.core.content.FileProvider.getUriForFile(
+                ctx,
+                "${ctx.packageName}.fileprovider",
+                apkFile.canonicalFile
+            )
+        } catch (e: Exception) {
+            androidx.core.content.FileProvider.getUriForFile(
+                ctx,
+                "${ctx.packageName}.fileprovider",
+                apkFile
+            )
         }
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(finalUri, "application/vnd.android.package-archive")
+            setDataAndType(contentUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
