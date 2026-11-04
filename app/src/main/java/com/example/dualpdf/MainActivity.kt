@@ -795,7 +795,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v9", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v10", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -803,7 +803,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v9", true) }
+                editPrefs { putBoolean("default_book_extracted_v10", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -1551,7 +1551,7 @@ fun ReaderScreen(reader: Reader) {
                 val clipData = clipboard?.primaryClip
                 if (clipData != null && clipData.itemCount > 0) {
                     val text = clipData.getItemAt(0).text?.toString() ?: ""
-                    if (text.isNotBlank() && text != lastCopiedText) {
+                    if (text.isNotBlank()) {
                         lastCopiedText = text
                         showGoogleSearchBanner = true
                     }
