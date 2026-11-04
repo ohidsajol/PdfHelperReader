@@ -3439,19 +3439,23 @@ data class AppUpdateInfo(
 )
 
 suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrentAppVersionName(ctx)): AppUpdateInfo = withContext(Dispatchers.IO) {
-    // 1. Primary Strategy: Follow GitHub web redirect to bypass REST API rate limits (HTTP 403)
+    // 1. Primary Strategy: Check Location header with instanceFollowRedirects = false (bypasses REST API rate limits)
     try {
         val webUrl = java.net.URL("https://github.com/ohidsajol/PdfHelperReader/releases/latest")
         val conn = webUrl.openConnection() as java.net.HttpURLConnection
         conn.requestMethod = "GET"
-        conn.instanceFollowRedirects = true
+        conn.instanceFollowRedirects = false
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        conn.connectTimeout = 10000
-        conn.readTimeout = 12000
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
 
-        val finalUrl = conn.url.toString()
-        if (finalUrl.contains("/tag/")) {
-            val latestTag = finalUrl.substringAfterLast("/tag/").trim()
+        var location = conn.getHeaderField("Location") ?: ""
+        if (location.isBlank() && conn.responseCode in 300..399) {
+            location = conn.getHeaderField("location") ?: ""
+        }
+
+        if (location.contains("/tag/")) {
+            val latestTag = location.substringAfterLast("/tag/").trim().split("/", "?", "#").first()
             if (latestTag.isNotBlank()) {
                 val apkUrl = "https://github.com/ohidsajol/PdfHelperReader/releases/download/$latestTag/PdfHelperReader-$latestTag.apk"
                 val isNewer = latestTag.lowercase().trim() != currentVersion.lowercase().trim()
@@ -3465,17 +3469,47 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrent
             }
         }
     } catch (_: Exception) {
-        // Fallback to REST API strategy
+        // Fallthrough
     }
 
-    // 2. Secondary Strategy: GitHub REST API
+    // 2. Secondary Strategy: Fetch HTML of releases/latest with instanceFollowRedirects = true
+    try {
+        val webUrl = java.net.URL("https://github.com/ohidsajol/PdfHelperReader/releases/latest")
+        val conn = webUrl.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.instanceFollowRedirects = true
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+
+        if (conn.responseCode in 200..399) {
+            val html = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val tagMatch = Regex("/releases/tag/(v[0-9a-zA-Z\\.-]+)").find(html)
+            if (tagMatch != null) {
+                val latestTag = tagMatch.groupValues[1]
+                val apkUrl = "https://github.com/ohidsajol/PdfHelperReader/releases/download/$latestTag/PdfHelperReader-$latestTag.apk"
+                val isNewer = latestTag.lowercase().trim() != currentVersion.lowercase().trim()
+                return@withContext AppUpdateInfo(
+                    latestTag = latestTag,
+                    releaseTitle = "PdfHelperReader $latestTag",
+                    releaseNotes = "New release $latestTag is available on GitHub.",
+                    apkDownloadUrl = apkUrl,
+                    isNewerAvailable = isNewer
+                )
+            }
+        }
+    } catch (_: Exception) {
+        // Fallthrough
+    }
+
+    // 3. Fallback Strategy: GitHub REST API
     val githubApiUrl = "https://api.github.com/repos/ohidsajol/PdfHelperReader/releases/latest"
     val url = java.net.URL(githubApiUrl)
     val conn = url.openConnection() as java.net.HttpURLConnection
     conn.requestMethod = "GET"
     conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    conn.connectTimeout = 10000
-    conn.readTimeout = 12000
+    conn.connectTimeout = 8000
+    conn.readTimeout = 8000
 
     if (conn.responseCode in 200..399) {
         val jsonStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }

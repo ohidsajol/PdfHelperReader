@@ -210,4 +210,24 @@ class VocabGeneratorTest {
         assertEquals("adjective", entry.pos[0].type)
         assertEquals(1.0f, entry.score)
     }
+
+    @Test
+    fun testCheckUpdateRedirect() {
+        val webUrl = java.net.URL("https://github.com/ohidsajol/PdfHelperReader/releases/latest")
+        val conn = webUrl.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.instanceFollowRedirects = false
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+
+        var location = conn.getHeaderField("Location") ?: ""
+        if (location.isBlank() && conn.responseCode in 300..399) {
+            location = conn.getHeaderField("location") ?: ""
+        }
+
+        assertTrue("Location header should contain /tag/, got: $location", location.contains("/tag/"))
+        val latestTag = location.substringAfterLast("/tag/").trim().split("/", "?", "#").first()
+        assertEquals("v3.2.1", latestTag)
+    }
 }
