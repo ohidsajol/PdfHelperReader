@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -799,7 +800,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v11", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v12", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -807,7 +808,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v11", true) }
+                editPrefs { putBoolean("default_book_extracted_v12", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -2741,6 +2742,7 @@ fun DocumentPanesLayout(
     vocabListState: androidx.compose.foundation.lazy.LazyListState? = null
 ) {
     val ctx = LocalContext.current
+    var showZenControls by rememberSaveable { mutableStateOf(true) }
 
     val emptyBookCard: @Composable () -> Unit = {
         MessageCard(
@@ -2807,23 +2809,23 @@ fun DocumentPanesLayout(
         SplitMode.SPLIT_BOTH -> {
             if (isLandscape) {
                 Row(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
                     VerticalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
                 }
             } else {
                 Column(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
                     HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
                 }
             }
         }
         SplitMode.ONLY_BOOK -> {
-            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
+            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
         }
         SplitMode.ONLY_VOCAB -> {
-            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
         }
     }
 }
@@ -2836,6 +2838,8 @@ fun PdfPane(
     onPage: (Int) -> Unit,
     isDarkMode: Boolean,
     isZenMode: Boolean = false,
+    showZenControls: Boolean = true,
+    onToggleZenControls: () -> Unit = {},
     reader: Reader,
     splitMode: SplitMode = SplitMode.SPLIT_BOTH,
     onExitZen: () -> Unit = {},
@@ -2846,7 +2850,6 @@ fun PdfPane(
 ) {
     val ctx = LocalContext.current
     var showPageDialog by remember { mutableStateOf(false) }
-    var showZenControls by remember(isZenMode) { mutableStateOf(true) }
 
     val splitLabel = when (splitMode) {
         SplitMode.SPLIT_BOTH -> "Both"
@@ -2868,7 +2871,7 @@ fun PdfPane(
                         Modifier.pointerInput(Unit) {
                             detectTapGestures(
                                 onDoubleTap = {
-                                    showZenControls = !showZenControls
+                                    onToggleZenControls()
                                 }
                             )
                         }
@@ -2887,7 +2890,7 @@ fun PdfPane(
                             isDarkMode = isDarkMode,
                             uri = pane.uri,
                             isZenMode = isZenMode,
-                            onToggleZenControls = { showZenControls = !showZenControls }
+                            onToggleZenControls = onToggleZenControls
                         )
                     } else if (pane.readingMode == ReadingMode.CONTINUOUS) {
                         ContinuousPageView(
@@ -2897,7 +2900,7 @@ fun PdfPane(
                             onPage = onPage,
                             externalListState = externalListState,
                             isZenMode = isZenMode,
-                            onToggleZenControls = { showZenControls = !showZenControls }
+                            onToggleZenControls = onToggleZenControls
                         )
                     } else {
                         PageView(
@@ -2907,7 +2910,7 @@ fun PdfPane(
                             pane = pane,
                             onPage = onPage,
                             isZenMode = isZenMode,
-                            onToggleZenControls = { showZenControls = !showZenControls }
+                            onToggleZenControls = onToggleZenControls
                         )
                     }
                 } else {
