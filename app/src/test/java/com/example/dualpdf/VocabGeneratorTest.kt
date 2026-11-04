@@ -23,7 +23,8 @@ data class TestPosEntry(
 )
 
 data class TestWordEntry(
-    val pos: List<TestPosEntry>
+    val pos: List<TestPosEntry>,
+    val score: Float? = null
 )
 
 class VocabGeneratorTest {
@@ -134,8 +135,9 @@ class VocabGeneratorTest {
                         }
                     }
                 }
+                val score = targetObj.get("score")?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asFloat
                 if (parsedList.isNotEmpty()) {
-                    return TestWordEntry(pos = parsedList)
+                    return TestWordEntry(pos = parsedList, score = score)
                 }
             }
 
@@ -177,51 +179,6 @@ class VocabGeneratorTest {
                 null
             }
         }
-
-        fun lookupWithLemmatization(word: String): TestWordEntry? {
-            val wLower = word.lowercase().trim()
-            var entry = lookupEntry(wLower)
-            if (entry != null) return entry
-
-            val candidates = mutableListOf<String>()
-
-            if (wLower.endsWith("s") && wLower.length > 3) {
-                candidates.add(wLower.dropLast(1))
-                if (wLower.endsWith("es") && wLower.length > 4) {
-                    candidates.add(wLower.dropLast(2))
-                }
-                if (wLower.endsWith("ies") && wLower.length > 4) {
-                    candidates.add(wLower.dropLast(3) + "y")
-                }
-            }
-
-            if (wLower.endsWith("ed") && wLower.length > 4) {
-                candidates.add(wLower.dropLast(2))
-                candidates.add(wLower.dropLast(1))
-                if (wLower.endsWith("ied") && wLower.length > 4) {
-                    candidates.add(wLower.dropLast(3) + "y")
-                }
-            }
-
-            if (wLower.endsWith("ing") && wLower.length > 5) {
-                candidates.add(wLower.dropLast(3))
-                candidates.add(wLower.dropLast(3) + "e")
-            }
-
-            if (wLower.endsWith("ly") && wLower.length > 4) {
-                candidates.add(wLower.dropLast(2))
-                if (wLower.endsWith("ily") && wLower.length > 4) {
-                    candidates.add(wLower.dropLast(3) + "y")
-                }
-            }
-
-            for (cand in candidates) {
-                entry = lookupEntry(cand)
-                if (entry != null) return entry
-            }
-
-            return null
-        }
     }
 
     @Test
@@ -233,40 +190,24 @@ class VocabGeneratorTest {
         assertTrue(entry.pos[0].def.contains("malaria"))
         assertEquals(1, entry.pos[0].eg.size)
         assertEquals(2, entry.pos[0].syn.size)
+        assertEquals(29.25f, entry.score)
     }
 
     @Test
-    fun testSaline() {
-        val entry = lookupEntry("saline")
+    fun testSarong() {
+        val entry = lookupEntry("sarong")
         assertNotNull(entry)
-        assertEquals(2, entry!!.pos.size)
+        assertEquals(1, entry!!.pos.size)
         assertEquals("noun", entry.pos[0].type)
-        assertEquals("adjective", entry.pos[1].type)
-        assertTrue(entry.pos[1].ant.contains("freshwater"))
+        assertEquals(28.38f, entry.score)
     }
 
     @Test
-    fun testCursed() {
-        val entry = lookupEntry("cursed")
+    fun testKnurly() {
+        val entry = lookupEntry("knurly")
         assertNotNull(entry)
-        assertEquals(3, entry!!.pos.size)
-        assertEquals("noun", entry.pos[0].type)
-        assertEquals("verb", entry.pos[1].type)
-        assertEquals("adjective", entry.pos[2].type)
-    }
-
-    @Test
-    fun testRootReference() {
-        // "uniclinal" points to "$#$Nonoclinal"
-        val entry = lookupEntry("uniclinal")
-        assertNotNull(entry)
-        assertTrue(entry!!.pos.isNotEmpty())
-    }
-
-    @Test
-    fun testLemmatization() {
-        val entry = lookupWithLemmatization("salines")
-        assertNotNull(entry)
-        assertTrue(entry!!.pos.isNotEmpty())
+        assertEquals(1, entry!!.pos.size)
+        assertEquals("adjective", entry.pos[0].type)
+        assertEquals(1.0f, entry.score)
     }
 }

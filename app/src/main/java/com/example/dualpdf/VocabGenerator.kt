@@ -35,7 +35,8 @@ data class PosEntry(
 )
 
 data class WordEntry(
-    val pos: List<PosEntry>
+    val pos: List<PosEntry>,
+    val score: Float? = null
 )
 
 data class VocabResult(
@@ -160,8 +161,11 @@ object VocabGenerator {
                     }
                 }
             }
+
+            val score = targetObj.get("score")?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asFloat
+
             if (parsedList.isNotEmpty()) {
-                return WordEntry(pos = parsedList)
+                return WordEntry(pos = parsedList, score = score)
             }
         }
 
@@ -247,6 +251,14 @@ object VocabGenerator {
         }
 
         return null
+    }
+
+    private fun formatScore(score: Float): String {
+        return if (score % 1.0f == 0.0f) {
+            score.toInt().toString()
+        } else {
+            score.toString()
+        }
     }
 
     private fun buildPosSpannable(pos: PosEntry): SpannableStringBuilder {
@@ -336,6 +348,12 @@ object VocabGenerator {
         }
         val wordPaint = TextPaint().apply {
             color = Color.rgb(26, 54, 93) // deep navy
+            textSize = 13f
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        val scorePaint = TextPaint().apply {
+            color = Color.rgb(113, 128, 150) // same color as words under antonyms
             textSize = 13f
             isFakeBoldText = true
             isAntiAlias = true
@@ -439,8 +457,13 @@ object VocabGenerator {
                             yOffset += 30f
                         }
 
-                        // Draw Word Headword (Bold Navy)
+                        // Draw Word Headword (Bold Navy) and Score (Antonym Red)
                         canvas.drawText(word, margin, yOffset, wordPaint)
+                        if (entry.score != null) {
+                            val wordWidth = wordPaint.measureText(word)
+                            val scoreText = " (" + formatScore(entry.score) + ")"
+                            canvas.drawText(scoreText, margin + wordWidth, yOffset, scorePaint)
+                        }
                         yOffset += wordHeaderHeight
 
                         // Draw each POS block
@@ -457,7 +480,13 @@ object VocabGenerator {
                                 canvas.drawText("Page $i (continued)", margin, yOffset, headerPaint)
                                 yOffset += 30f
 
-                                canvas.drawText("$word (cont.)", margin, yOffset, wordPaint)
+                                val contWord = "$word (cont.)"
+                                canvas.drawText(contWord, margin, yOffset, wordPaint)
+                                if (entry.score != null) {
+                                    val contWidth = wordPaint.measureText(contWord)
+                                    val scoreText = " (" + formatScore(entry.score) + ")"
+                                    canvas.drawText(scoreText, margin + contWidth, yOffset, scorePaint)
+                                }
                                 yOffset += wordHeaderHeight
                             }
 
