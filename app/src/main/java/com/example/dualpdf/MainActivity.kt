@@ -1,5 +1,6 @@
 package com.example.dualpdf
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -19,6 +20,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import android.content.pm.PackageManager
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
@@ -795,7 +799,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v10", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v11", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -803,7 +807,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v10", true) }
+                editPrefs { putBoolean("default_book_extracted_v11", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -1540,6 +1544,19 @@ fun ReaderScreen(reader: Reader) {
     var splitMode by remember { mutableStateOf(SplitMode.SPLIT_BOTH) }
     var showOcrConfirmDialog by remember { mutableStateOf(false) }
     var isZenMode by remember { mutableStateOf(false) }
+
+    val window = (ctx as? Activity)?.window
+    LaunchedEffect(isZenMode) {
+        if (window != null) {
+            val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+            if (isZenMode) {
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
 
     var lastCopiedText by remember { mutableStateOf("") }
     var showGoogleSearchBanner by remember { mutableStateOf(false) }
@@ -2829,6 +2846,7 @@ fun PdfPane(
 ) {
     val ctx = LocalContext.current
     var showPageDialog by remember { mutableStateOf(false) }
+    var showZenControls by remember(isZenMode) { mutableStateOf(true) }
 
     val splitLabel = when (splitMode) {
         SplitMode.SPLIT_BOTH -> "Both"
@@ -2841,18 +2859,56 @@ fun PdfPane(
         if (!isZenMode && !isGoogleWebInVocab) {
             PaneBar(label, pane, onPage)
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .then(
+                    if (isZenMode) {
+                        Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    showZenControls = !showZenControls
+                                }
+                            )
+                        }
+                    } else Modifier
+                )
+        ) {
             if (isGoogleWebInVocab) {
                 GoogleWebView(reader.googleSearchQuery, onBackToVocab = { reader.vocabMode = VocabMode.VOCAB_PDF })
             } else {
                 val doc = pane.doc
                 if (doc != null) {
                     if (pane.viewMode == ViewMode.TEXT_VIEW) {
-                        TextView(doc, pane.page, isDarkMode, pane.uri)
+                        TextView(
+                            doc = doc,
+                            page = pane.page,
+                            isDarkMode = isDarkMode,
+                            uri = pane.uri,
+                            isZenMode = isZenMode,
+                            onToggleZenControls = { showZenControls = !showZenControls }
+                        )
                     } else if (pane.readingMode == ReadingMode.CONTINUOUS) {
-                        ContinuousPageView(doc, isDarkMode, pane, onPage, externalListState = externalListState)
+                        ContinuousPageView(
+                            doc = doc,
+                            isDarkMode = isDarkMode,
+                            pane = pane,
+                            onPage = onPage,
+                            externalListState = externalListState,
+                            isZenMode = isZenMode,
+                            onToggleZenControls = { showZenControls = !showZenControls }
+                        )
                     } else {
-                        PageView(doc, pane.page, isDarkMode, pane, onPage)
+                        PageView(
+                            doc = doc,
+                            page = pane.page,
+                            isDarkMode = isDarkMode,
+                            pane = pane,
+                            onPage = onPage,
+                            isZenMode = isZenMode,
+                            onToggleZenControls = { showZenControls = !showZenControls }
+                        )
                     }
                 } else {
                     Box(
@@ -2862,7 +2918,7 @@ fun PdfPane(
                 }
             }
 
-            if (isZenMode) {
+            if (isZenMode && showZenControls) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
@@ -2887,54 +2943,51 @@ fun PdfPane(
                             color = androidx.compose.ui.graphics.Color.White
                         )
 
-                        val showButtons = true
-                        if (showButtons) {
-                            HorizontalDivider(modifier = Modifier.width(12.dp), color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.3f))
-                            Text(
-                                text = "B",
-                                modifier = Modifier.clickable {
-                                    reader.addBookmark()
-                                    Toast.makeText(ctx, "Bookmarked!", Toast.LENGTH_SHORT).show()
-                                }.padding(vertical = 1.dp, horizontal = 2.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
-                            Text(
-                                text = "G",
-                                modifier = Modifier.clickable {
-                                    if (reader.vocabMode == VocabMode.VOCAB_PDF) {
-                                        reader.vocabMode = VocabMode.GOOGLE_WEB
-                                        if (splitMode != SplitMode.SPLIT_BOTH) {
-                                            onSetSplitMode(SplitMode.SPLIT_BOTH)
-                                        }
-                                        Toast.makeText(ctx, "Google Mode ON (Split View)", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        reader.vocabMode = VocabMode.VOCAB_PDF
-                                        Toast.makeText(ctx, "Google Mode OFF", Toast.LENGTH_SHORT).show()
+                        HorizontalDivider(modifier = Modifier.width(12.dp), color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.3f))
+                        Text(
+                            text = "B",
+                            modifier = Modifier.clickable {
+                                reader.addBookmark()
+                                Toast.makeText(ctx, "Bookmarked!", Toast.LENGTH_SHORT).show()
+                            }.padding(vertical = 1.dp, horizontal = 2.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
+                        Text(
+                            text = "G",
+                            modifier = Modifier.clickable {
+                                if (reader.vocabMode == VocabMode.VOCAB_PDF) {
+                                    reader.vocabMode = VocabMode.GOOGLE_WEB
+                                    if (splitMode != SplitMode.SPLIT_BOTH) {
+                                        onSetSplitMode(SplitMode.SPLIT_BOTH)
                                     }
-                                }.padding(vertical = 1.dp, horizontal = 2.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
-                            Text(
-                                text = splitLabel,
-                                modifier = Modifier.clickable {
-                                    onToggleSplitMode()
-                                }.padding(vertical = 1.dp, horizontal = 2.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
-                            Text(
-                                text = "X",
-                                modifier = Modifier.clickable(onClick = onExitZen).padding(vertical = 1.dp, horizontal = 2.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
-                        }
+                                    Toast.makeText(ctx, "Google Mode ON (Split View)", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    reader.vocabMode = VocabMode.VOCAB_PDF
+                                    Toast.makeText(ctx, "Google Mode OFF", Toast.LENGTH_SHORT).show()
+                                }
+                            }.padding(vertical = 1.dp, horizontal = 2.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
+                        Text(
+                            text = splitLabel,
+                            modifier = Modifier.clickable {
+                                onToggleSplitMode()
+                            }.padding(vertical = 1.dp, horizontal = 2.dp),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
+                        Text(
+                            text = "X",
+                            modifier = Modifier.clickable(onClick = onExitZen).padding(vertical = 1.dp, horizontal = 2.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
                     }
                 }
             }
@@ -3102,7 +3155,15 @@ fun PaneBar(label: String, pane: Pane, onPage: (Int) -> Unit) {
 
 /** Renders one page fit-to-width inside a scrollable area with pinch-to-zoom, centering, and horizontal page swiping. */
 @Composable
-fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean, pane: Pane, onPage: (Int) -> Unit) {
+fun PageView(
+    doc: PdfDoc,
+    page: Int,
+    isDarkMode: Boolean,
+    pane: Pane,
+    onPage: (Int) -> Unit,
+    isZenMode: Boolean = false,
+    onToggleZenControls: () -> Unit = {}
+) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
         var image by remember(doc) { mutableStateOf<ImageBitmap?>(null) }
@@ -3156,21 +3217,25 @@ fun PageView(doc: PdfDoc, page: Int, isDarkMode: Boolean, pane: Pane, onPage: (I
             Box(
                 Modifier
                     .fillMaxSize()
-                    .pointerInput(doc, page) {
+                    .pointerInput(doc, page, isZenMode) {
                         detectTapGestures(
                             onTap = {
                                 focusManager.clearFocus()
                             },
                             onDoubleTap = { offset ->
-                                val totalCount = doc.pageCount
-                                val halfWidth = size.width / 2f
-                                if (offset.x > halfWidth) {
-                                    if (pane.page < totalCount - 1) {
-                                        onPage(pane.page + 1)
-                                    }
+                                if (isZenMode) {
+                                    onToggleZenControls()
                                 } else {
-                                    if (pane.page > 0) {
-                                        onPage(pane.page - 1)
+                                    val totalCount = doc.pageCount
+                                    val halfWidth = size.width / 2f
+                                    if (offset.x > halfWidth) {
+                                        if (pane.page < totalCount - 1) {
+                                            onPage(pane.page + 1)
+                                        }
+                                    } else {
+                                        if (pane.page > 0) {
+                                            onPage(pane.page - 1)
+                                        }
                                     }
                                 }
                             }
@@ -3846,7 +3911,14 @@ suspend fun extractPageText(ctx: Context, uri: Uri?, doc: PdfDoc, pageIndex: Int
 }
 
 @Composable
-fun TextView(doc: PdfDoc, page: Int, isDarkMode: Boolean, uri: Uri?) {
+fun TextView(
+    doc: PdfDoc,
+    page: Int,
+    isDarkMode: Boolean,
+    uri: Uri?,
+    isZenMode: Boolean = false,
+    onToggleZenControls: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     var textContent by remember(doc, page, uri) { mutableStateOf("Loading text...") }
 
@@ -3863,6 +3935,15 @@ fun TextView(doc: PdfDoc, page: Int, isDarkMode: Boolean, uri: Uri?) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(
+                    if (isZenMode) {
+                        Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = { onToggleZenControls() }
+                            )
+                        }
+                    } else Modifier
+                )
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             contentAlignment = Alignment.TopStart
@@ -3882,7 +3963,9 @@ fun ContinuousPageView(
     isDarkMode: Boolean,
     pane: Pane,
     onPage: (Int) -> Unit,
-    externalListState: androidx.compose.foundation.lazy.LazyListState? = null
+    externalListState: androidx.compose.foundation.lazy.LazyListState? = null,
+    isZenMode: Boolean = false,
+    onToggleZenControls: () -> Unit = {}
 ) {
     val listState = externalListState ?: rememberLazyListState(initialFirstVisibleItemIndex = pane.page)
 
@@ -3923,7 +4006,19 @@ fun ContinuousPageView(
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .then(
+                if (isZenMode) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = { onToggleZenControls() }
+                        )
+                    }
+                } else Modifier
+            )
+    ) {
         val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
         LazyColumn(
             state = listState,
@@ -3934,7 +4029,7 @@ fun ContinuousPageView(
                 count = doc.pageCount,
                 key = { it }
             ) { index ->
-                ContinuousPageItem(doc, index, widthPx, isDarkMode, pane, listState)
+                ContinuousPageItem(doc, index, widthPx, isDarkMode, pane, listState, isZenMode, onToggleZenControls)
                 Spacer(Modifier.height(16.dp))
             }
         }
@@ -3942,7 +4037,16 @@ fun ContinuousPageView(
 }
 
 @Composable
-fun ContinuousPageItem(doc: PdfDoc, index: Int, widthPx: Int, isDarkMode: Boolean, pane: Pane, listState: androidx.compose.foundation.lazy.LazyListState) {
+fun ContinuousPageItem(
+    doc: PdfDoc,
+    index: Int,
+    widthPx: Int,
+    isDarkMode: Boolean,
+    pane: Pane,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    isZenMode: Boolean = false,
+    onToggleZenControls: () -> Unit = {}
+) {
     val ratio = doc.getPageRatio(index) ?: 0.707f // Default A4 ratio (1 / sqrt(2))
     
     var image by remember(doc, index) { mutableStateOf<ImageBitmap?>(null) }
@@ -3989,10 +4093,15 @@ fun ContinuousPageItem(doc: PdfDoc, index: Int, widthPx: Int, isDarkMode: Boolea
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(ratio)
-                .pointerInput(index) {
+                .pointerInput(index, isZenMode) {
                     detectTapGestures(
                         onTap = {
                             focusManager.clearFocus()
+                        },
+                        onDoubleTap = {
+                            if (isZenMode) {
+                                onToggleZenControls()
+                            }
                         }
                     )
                 },
