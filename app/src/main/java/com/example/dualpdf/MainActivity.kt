@@ -3439,6 +3439,36 @@ data class AppUpdateInfo(
 )
 
 suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrentAppVersionName(ctx)): AppUpdateInfo = withContext(Dispatchers.IO) {
+    // 1. Primary Strategy: Follow GitHub web redirect to bypass REST API rate limits (HTTP 403)
+    try {
+        val webUrl = java.net.URL("https://github.com/ohidsajol/PdfHelperReader/releases/latest")
+        val conn = webUrl.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.instanceFollowRedirects = true
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        conn.connectTimeout = 10000
+        conn.readTimeout = 12000
+
+        val finalUrl = conn.url.toString()
+        if (finalUrl.contains("/tag/")) {
+            val latestTag = finalUrl.substringAfterLast("/tag/").trim()
+            if (latestTag.isNotBlank()) {
+                val apkUrl = "https://github.com/ohidsajol/PdfHelperReader/releases/download/$latestTag/PdfHelperReader-$latestTag.apk"
+                val isNewer = latestTag.lowercase().trim() != currentVersion.lowercase().trim()
+                return@withContext AppUpdateInfo(
+                    latestTag = latestTag,
+                    releaseTitle = "PdfHelperReader $latestTag",
+                    releaseNotes = "New release $latestTag is available on GitHub.",
+                    apkDownloadUrl = apkUrl,
+                    isNewerAvailable = isNewer
+                )
+            }
+        }
+    } catch (_: Exception) {
+        // Fallback to REST API strategy
+    }
+
+    // 2. Secondary Strategy: GitHub REST API
     val githubApiUrl = "https://api.github.com/repos/ohidsajol/PdfHelperReader/releases/latest"
     val url = java.net.URL(githubApiUrl)
     val conn = url.openConnection() as java.net.HttpURLConnection
@@ -3450,8 +3480,8 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrent
     if (conn.responseCode in 200..399) {
         val jsonStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         val root = Gson().fromJson(jsonStr, com.google.gson.JsonObject::class.java)
-        val latestTag = root.get("tag_name")?.asString ?: "v2.3.0"
-        val releaseTitle = root.get("name")?.asString ?: "DualPDF Reader Update"
+        val latestTag = root.get("tag_name")?.asString ?: "v3.2.1"
+        val releaseTitle = root.get("name")?.asString ?: "PdfHelperReader Update"
         val releaseNotes = root.get("body")?.asString ?: ""
 
         val assets = root.getAsJsonArray("assets")
@@ -3466,11 +3496,14 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrent
                 }
             }
         }
+        if (apkDownloadUrl.isBlank()) {
+            apkDownloadUrl = "https://github.com/ohidsajol/PdfHelperReader/releases/download/$latestTag/PdfHelperReader-$latestTag.apk"
+        }
 
         val isNewer = latestTag.lowercase().trim() != currentVersion.lowercase().trim()
         AppUpdateInfo(latestTag, releaseTitle, releaseNotes, apkDownloadUrl, isNewer)
     } else {
-        throw IOException("GitHub API returned HTTP ${conn.responseCode}")
+        throw IOException("GitHub update check failed (HTTP ${conn.responseCode})")
     }
 }
 
