@@ -65,4 +65,5 @@ dependencies {
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+    testImplementation("junit:junit:4.13.2")
 }

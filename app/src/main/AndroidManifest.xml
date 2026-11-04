@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
+        android:largeHeap="true"
         android:requestLegacyExternalStorage="true"
         android:allowBackup="true"
         android:icon="@drawable/pdf_helper_icon"
