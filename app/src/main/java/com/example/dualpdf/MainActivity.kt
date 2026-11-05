@@ -925,7 +925,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadHighlights()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v13", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v14", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -933,7 +933,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v13", true) }
+                editPrefs { putBoolean("default_book_extracted_v14", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -2077,7 +2077,8 @@ fun ReaderScreen(reader: Reader) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Text("PdfHelperReader (v$currentVer)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                val displayVer = if (currentVer.startsWith("v")) currentVer else "v$currentVer"
+                                Text("PdfHelperReader ($displayVer)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                                 Spacer(Modifier.height(2.dp))
                                 Text("Advanced Dual-Pane Document & Vocabulary Reader", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
                             }
