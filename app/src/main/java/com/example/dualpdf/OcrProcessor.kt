@@ -12,6 +12,7 @@ import com.itextpdf.text.pdf.PdfContentByte
 import com.itextpdf.text.pdf.PdfReader
 import com.itextpdf.text.pdf.PdfStamper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -22,6 +23,7 @@ object OcrProcessor {
         ctx: Context,
         inputPdf: File,
         outputPdf: File,
+        forceOcr: Boolean = false,
         onProgress: suspend (current: Int, total: Int) -> Unit
     ) = withContext(Dispatchers.IO) {
         val reader = PdfReader(inputPdf.absolutePath)
@@ -36,11 +38,12 @@ object OcrProcessor {
 
         try {
             for (i in 1..totalPages) {
+                ensureActive()
                 onProgress(i, totalPages)
                 val pageText = com.itextpdf.text.pdf.parser.PdfTextExtractor.getTextFromPage(reader, i)
 
-                // Skip if page seems to already have text (using length > 50 as a generic heuristic)
-                if (pageText.trim().length > 50) {
+                // Skip if page seems to already have text (unless forced)
+                if (!forceOcr && pageText.trim().length > 50) {
                     continue
                 }
 
@@ -85,6 +88,7 @@ object OcrProcessor {
                 bmp.recycle()
             }
         } finally {
+            try { recognizer.close() } catch (_: Exception) {}
             stamper.close()
             reader.close()
             pdfRenderer.close()

@@ -31,23 +31,29 @@ import androidx.core.content.ContextCompat
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.foundation.lazy.rememberLazyListState
 import android.content.res.Configuration
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.platform.ClipboardManager
@@ -56,10 +62,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import java.util.UUID
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
@@ -70,6 +78,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
@@ -104,31 +113,62 @@ class PdfDoc private constructor(
     
     @Volatile private var closed = false
     private val bitmapCache = object : android.util.LruCache<String, Bitmap>(
-        (Runtime.getRuntime().maxMemory() / 4).toInt()
+        (Runtime.getRuntime().maxMemory() / 3).toInt()
     ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
         // Removed entryRemoved and recycle() to prevent "Canvas: trying to use a recycled bitmap" crash in Compose
     }
 
     private val ocrCache = android.util.LruCache<String, List<OcrBox>>(50)
+    private val wordsCache = android.util.LruCache<Int, List<PdfWord>>(120)
+    private val latestBitmaps = java.util.concurrent.ConcurrentHashMap<Int, Bitmap>()
     private val preloadJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     
     private val pageRatios = java.util.concurrent.ConcurrentHashMap<Int, Float>()
     private val textCache = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
+    val itextLock = Any()
+    private var pdfBytes: ByteArray? = null
+
     var itextReader: com.itextpdf.text.pdf.PdfReader? = null
         private set
 
-    suspend fun getOrInitTextReader(ctx: Context, uri: Uri?): com.itextpdf.text.pdf.PdfReader? = withContext(textDispatcher) {
-        if (itextReader != null) return@withContext itextReader
-        if (uri == null) return@withContext null
+    private fun initItextReaderLocked(ctx: Context, uri: Uri?): com.itextpdf.text.pdf.PdfReader? {
+        if (itextReader != null) return itextReader
         try {
-            val resolver = ctx.contentResolver
-            val input = resolver.openInputStream(uri)
-            input?.use { itextReader = com.itextpdf.text.pdf.PdfReader(it) }
-            itextReader
-        } catch (e: Exception) {
-            null
+            if (convertedFile != null && convertedFile.exists()) {
+                itextReader = com.itextpdf.text.pdf.PdfReader(convertedFile.absolutePath)
+                return itextReader
+            }
+            if (tempFile != null && tempFile.exists()) {
+                itextReader = com.itextpdf.text.pdf.PdfReader(tempFile.absolutePath)
+                return itextReader
+            }
+            if (uri != null) {
+                if (uri.scheme == "file" && uri.path != null && File(uri.path!!).exists()) {
+                    itextReader = com.itextpdf.text.pdf.PdfReader(uri.path)
+                    return itextReader
+                }
+                if (pdfBytes == null) {
+                    pdfBytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }
+                pdfBytes?.let { bytes ->
+                    itextReader = com.itextpdf.text.pdf.PdfReader(bytes)
+                }
+            }
+        } catch (_: Exception) {}
+        return itextReader
+    }
+
+    fun synchronizedExtractWords(pageIndex1Based: Int): List<PdfWord> = synchronized(itextLock) {
+        val reader = itextReader ?: return emptyList()
+        if (pageIndex1Based > reader.numberOfPages) return emptyList()
+        return PdfTextHelper.extractWordsFromReader(reader, pageIndex1Based)
+    }
+
+    suspend fun getOrInitTextReader(ctx: Context, uri: Uri?): com.itextpdf.text.pdf.PdfReader? = withContext(textDispatcher) {
+        synchronized(itextLock) {
+            initItextReaderLocked(ctx, uri)
         }
     }
 
@@ -137,18 +177,49 @@ class PdfDoc private constructor(
     fun getPageText(index: Int): String? = textCache[index]
     fun putPageText(index: Int, text: String) { textCache[index] = text }
 
+    fun getWords(pageIndex: Int): List<PdfWord>? = wordsCache.get(pageIndex)
+    fun putWords(pageIndex: Int, words: List<PdfWord>) { wordsCache.put(pageIndex, words) }
+
+    fun getOrExtractWords(ctx: Context, uri: Uri?, pageIndex: Int): List<PdfWord> {
+        if (pageIndex < 0 || pageIndex >= pageCount) return emptyList()
+        wordsCache.get(pageIndex)?.let { return it }
+        synchronized(itextLock) {
+            wordsCache.get(pageIndex)?.let { return it }
+            try {
+                initItextReaderLocked(ctx, uri)
+                val itext = itextReader
+                if (itext != null && pageIndex + 1 <= itext.numberOfPages) {
+                    val words = PdfTextHelper.extractWordsFromReader(itext, pageIndex + 1)
+                    if (words.isNotEmpty()) {
+                        wordsCache.put(pageIndex, words)
+                        return words
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return emptyList()
+    }
+
     fun getCachedOcrBoxes(key: String): List<OcrBox>? = ocrCache.get(key)
     fun putCachedOcrBoxes(key: String, boxes: List<OcrBox>) { ocrCache.put(key, boxes) }
 
-    fun getPageRatio(index: Int): Float? = pageRatios[index]
+    fun getAnyCachedBitmap(pageIndex: Int): Bitmap? = latestBitmaps[pageIndex]
+
+    fun getPageRatio(index: Int): Float? = pageRatios[index] ?: pageRatios.values.firstOrNull()
 
     /** Renders [index] as a white-backed ARGB bitmap, [targetWidth] px wide (clamped by MAX_DIM). */
     suspend fun render(index: Int, targetWidth: Int): Bitmap = withContext(renderDispatcher) {
         val cacheKey = "${index}_${targetWidth}"
-        bitmapCache.get(cacheKey)?.let { return@withContext it }
+        bitmapCache.get(cacheKey)?.let { 
+            latestBitmaps[index] = it
+            return@withContext it 
+        }
 
         check(!closed) { "Document is closed" }
-        bitmapCache.get(cacheKey)?.let { return@withContext it }
+        bitmapCache.get(cacheKey)?.let { 
+            latestBitmaps[index] = it
+            return@withContext it 
+        }
 
         val page = renderer.openPage(index)
         try {
@@ -162,6 +233,7 @@ class PdfDoc private constructor(
             bmp.eraseColor(AColor.WHITE)           // PdfRenderer needs an opaque background
             page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             bitmapCache.put(cacheKey, bmp)
+            latestBitmaps[index] = bmp
             bmp
         } finally {
             page.close()
@@ -229,10 +301,16 @@ class PdfDoc private constructor(
             preloadJobs.clear()
             runCatching { renderer.close() }
             runCatching { pfd.close() }
-            runCatching { itextReader?.close() }
+            synchronized(itextLock) {
+                runCatching { itextReader?.close() }
+                itextReader = null
+                pdfBytes = null
+            }
             tempFile?.delete()
             bitmapCache.evictAll()
             ocrCache.evictAll()
+            wordsCache.evictAll()
+            latestBitmaps.clear()
             textCache.clear()
         }
     }
@@ -427,6 +505,10 @@ class Pane {
     var readingMode by mutableStateOf(ReadingMode.CONTINUOUS)
     var viewMode by mutableStateOf(ViewMode.PDF_VIEW)
     var uri by mutableStateOf<Uri?>(null)
+
+    var activeSelection by mutableStateOf<TextSelection?>(null)
+    var isDraggingSelection by mutableStateOf(false)
+    var activeHighlightMenu by mutableStateOf<Highlight?>(null)
 }
 
 data class Bookmark(
@@ -502,10 +584,17 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     var vocabMode by mutableStateOf(VocabMode.VOCAB_PDF)
     var googleSearchQuery by mutableStateOf("https://www.google.com")
         private set
+    var googleRawQuery by mutableStateOf("")
+        private set
+    var googleSearchToken by mutableLongStateOf(0L)
+        private set
 
     fun searchGoogle(query: String) {
         vocabMode = VocabMode.GOOGLE_WEB
-        val encoded = Uri.encode(query)
+        val clean = query.filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
+        googleRawQuery = clean
+        googleSearchToken++
+        val encoded = Uri.encode(clean)
         googleSearchQuery = "https://www.google.com/search?q=$encoded"
     }
 
@@ -516,7 +605,41 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         private set
 
     val bookmarks = mutableStateListOf<Bookmark>()
+    val highlights = mutableStateListOf<Highlight>()
     val history = mutableStateListOf<HistoryEntry>()
+
+    var activeSelection: TextSelection?
+        get() = book.activeSelection ?: vocab.activeSelection
+        set(value) {
+            book.activeSelection = value
+            vocab.activeSelection = value
+        }
+
+    var activeHighlightMenu: Highlight?
+        get() = book.activeHighlightMenu ?: vocab.activeHighlightMenu
+        set(value) {
+            book.activeHighlightMenu = value
+            vocab.activeHighlightMenu = value
+        }
+
+    var isDraggingSelection: Boolean
+        get() = book.isDraggingSelection || vocab.isDraggingSelection
+        set(value) {
+            book.isDraggingSelection = value
+            vocab.isDraggingSelection = value
+        }
+
+    var isBookEpub by mutableStateOf(false)
+        private set
+
+    fun isCurrentBookEpub(): Boolean {
+        val uri = bookUri
+        if (uri != null && EpubParser.isEpub(ctx, uri)) return true
+        if (book.name?.lowercase()?.endsWith(".epub") == true) return true
+        if (book.doc?.convertedFile?.name?.lowercase()?.startsWith("epub_") == true) return true
+        if (book.doc?.convertedFile?.name?.lowercase()?.contains(".epub") == true) return true
+        return false
+    }
 
     private var bookUri: Uri? = null
     private var bookKey = ""
@@ -784,6 +907,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         syncFromDisk()
         isDarkMode = getBoolPref("is_dark_mode", false)
         loadBookmarks()
+        loadHighlights()
         loadHistory()
 
         val lastBook = prefs.getString("last_book_uri", null)
@@ -798,6 +922,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         isDarkMode = getBoolPref("is_dark_mode", false)
         
         loadBookmarks()
+        loadHighlights()
         loadHistory()
         
         val defaultExtracted = getBoolPref("default_book_extracted_v12", false)
@@ -1012,8 +1137,58 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         vocabJob = null
     }
 
-    fun generateOcr(onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
+    suspend fun checkOcrStatus(): String? = withContext(Dispatchers.IO) {
+        val activeDoc = book.doc ?: return@withContext "Please open a document first"
+
+        // 1. EPUB check
+        if (isBookEpub || isCurrentBookEpub()) {
+            return@withContext "This EPUB already has digital text — OCR is not needed"
+        }
+
+        // 2. Already OCR'ed file check
+        val name = book.name?.lowercase() ?: ""
+        val convertedName = activeDoc.convertedFile?.name?.lowercase() ?: ""
+        if (name.contains("_ocr.pdf") || convertedName.contains("_ocr.pdf")) {
+            return@withContext "Document is already OCR'ed — OCR is not needed"
+        }
+
+        // 3. Digital text check on pages
+        val totalPages = activeDoc.pageCount
+        if (totalPages <= 0) return@withContext null
+
+        val uri = bookUri
+        val itext = activeDoc.getOrInitTextReader(ctx, uri)
+        if (itext != null) {
+            val pagesToSample = listOf(book.page, 0, totalPages / 2, totalPages - 1)
+                .distinct()
+                .filter { it in 0 until totalPages }
+
+            for (p in pagesToSample) {
+                val cached = activeDoc.getWords(p)
+                if (cached != null && cached.size >= 5) {
+                    return@withContext "Document already contains searchable text — OCR is not needed"
+                }
+
+                try {
+                    if (p + 1 <= itext.numberOfPages) {
+                        val text = com.itextpdf.text.pdf.parser.PdfTextExtractor.getTextFromPage(itext, p + 1)
+                        if (text.isNotBlank() && text.trim().length >= 15) {
+                            return@withContext "Document already contains searchable text — OCR is not needed"
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        null
+    }
+
+    fun generateOcr(forceOcr: Boolean = false, onProgress: (Int, Int) -> Unit, onDone: (File) -> Unit, onError: (Exception) -> Unit) {
         val activeDoc = book.doc ?: return
+        if (isBookEpub || isCurrentBookEpub()) {
+            onError(IllegalStateException("OCR is disabled for EPUB documents"))
+            return
+        }
         ocrJob?.cancel()
         ocrJob = scope.launch(Dispatchers.IO) {
             try {
@@ -1032,7 +1207,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
                 val outputPdf = File(ctx.cacheDir, "ocr_output.pdf")
                 
-                OcrProcessor.processPdf(ctx, inputPdf, outputPdf) { current, total ->
+                OcrProcessor.processPdf(ctx, inputPdf, outputPdf, forceOcr = forceOcr) { current, total ->
                     scope.launch(Dispatchers.Main) {
                         onProgress(current, total)
                     }
@@ -1079,6 +1254,103 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             } catch (e: Exception) {}
         }
     }
+
+    fun loadHighlights() {
+        highlights.clear()
+        if (bookKey.isNotBlank()) {
+            val json = prefs.getString("highlights_$bookKey", "[]")
+            try {
+                val type = object : TypeToken<List<Highlight>>() {}.type
+                val list: List<Highlight> = Gson().fromJson(json, type) ?: emptyList()
+                highlights.addAll(list)
+            } catch (e: Exception) {}
+        }
+    }
+
+    fun saveHighlights() {
+        if (bookKey.isNotBlank()) {
+            val json = Gson().toJson(highlights)
+            editPrefs { putString("highlights_$bookKey", json) }
+        }
+    }
+
+    fun addHighlight(h: Highlight) {
+        highlights.add(h)
+        saveHighlights()
+    }
+
+    fun addHighlights(list: List<Highlight>) {
+        if (list.isEmpty()) return
+        highlights.addAll(list)
+        saveHighlights()
+    }
+
+    fun getRelatedHighlights(h: Highlight): List<Highlight> {
+        if (h.groupId != null) {
+            val group = highlights.filter { it.groupId == h.groupId }.sortedBy { it.pageIndex }
+            if (group.isNotEmpty()) return group
+        }
+        val close = highlights.filter {
+            it.colorHex == h.colorHex && kotlin.math.abs(it.createdAt - h.createdAt) < 1000L
+        }
+        if (close.size > 1) {
+            val sorted = close.sortedBy { it.pageIndex }
+            var isConsecutive = true
+            for (i in 0 until sorted.size - 1) {
+                if (sorted[i + 1].pageIndex != sorted[i].pageIndex + 1) {
+                    isConsecutive = false
+                    break
+                }
+            }
+            if (isConsecutive && sorted.any { it.id == h.id }) {
+                return sorted
+            }
+        }
+        return listOf(h)
+    }
+
+    fun getGroupedHighlights(): List<HighlightGroup> {
+        val processedIds = mutableSetOf<String>()
+        val groups = mutableListOf<HighlightGroup>()
+        val sorted = highlights.sortedWith(compareBy({ it.pageIndex }, { it.createdAt }))
+        for (h in sorted) {
+            if (h.id in processedIds) continue
+            val related = getRelatedHighlights(h)
+            for (r in related) {
+                processedIds.add(r.id)
+            }
+            if (related.isNotEmpty()) {
+                groups.add(HighlightGroup(related.sortedBy { it.pageIndex }))
+            }
+        }
+        return groups
+    }
+
+    fun removeHighlight(h: Highlight) {
+        val related = getRelatedHighlights(h)
+        val idsToRemove = related.map { it.id }.toSet()
+        highlights.removeAll { it.id in idsToRemove }
+        saveHighlights()
+    }
+
+    fun updateHighlightColor(h: Highlight, newColorHex: String) {
+        val related = getRelatedHighlights(h)
+        val idsToUpdate = related.map { it.id }.toSet()
+        for (i in highlights.indices) {
+            if (highlights[i].id in idsToUpdate) {
+                highlights[i] = highlights[i].copy(colorHex = newColorHex)
+            }
+        }
+        saveHighlights()
+    }
+
+    fun updateHighlight(h: Highlight) {
+        val idx = highlights.indexOfFirst { it.id == h.id }
+        if (idx != -1) {
+            highlights[idx] = h
+            saveHighlights()
+        }
+    }
     
     fun addBookmark() {
         val doc = book.doc ?: return
@@ -1090,17 +1362,25 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         scope.launch {
             var words = emptyList<String>()
 
-            // 1. Try cached OCR boxes
-            val cachedOcr = doc.getCachedOcrBoxes("ocr_${bookPageIndex}")
-            if (!cachedOcr.isNullOrEmpty()) {
-                words = cachedOcr.map { it.text.trim() }.filter { it.isNotBlank() }
+            // 1. Try fast native extraction from PdfTextHelper
+            val extracted = PdfTextHelper.extractWordsFromPage(ctx, book.uri, doc, bookPageIndex)
+            if (extracted.isNotEmpty()) {
+                words = extracted.map { it.text.trim() }.filter { it.isNotBlank() }
             }
 
-            // 2. If OCR boxes were empty, try iText page text
+            // 2. If OCR boxes or words were empty, try iText page text
             if (words.size < 5) {
                 val rawText = extractPageText(ctx, book.uri, doc, bookPageIndex)
                 if (!rawText.startsWith("No ") && !rawText.startsWith("Could ")) {
                     words = rawText.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                }
+            }
+
+            // 3. Fallback to cached OCR boxes or render bitmap
+            if (words.size < 5) {
+                val cachedOcr = doc.getCachedOcrBoxes("ocr_${bookPageIndex}")
+                if (!cachedOcr.isNullOrEmpty()) {
+                    words = cachedOcr.map { it.text.trim() }.filter { it.isNotBlank() }
                 }
             }
 
@@ -1185,8 +1465,10 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     book.page = prefs.getInt("book_page_$bookKey", 0).coerceIn(0, doc.pageCount - 1)
                     book.doc = doc
                     book.uri = uri
+                    isBookEpub = isCurrentBookEpub()
                     editPrefs { putString("last_book_uri", uri.toString()) }
                     loadBookmarks()
+                    loadHighlights()
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     book.message = describe(e)
@@ -1242,6 +1524,11 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         val d = p.doc
         p.doc = null          // UI stops using it first
         p.uri = null
+        if (p == book) {
+            isBookEpub = false
+            activeSelection = null
+            isDraggingSelection = false
+        }
         d?.close()            // then wait for in-flight render and release
     }
 }
@@ -1521,6 +1808,7 @@ fun ReaderScreen(reader: Reader) {
     var showDownloadedInstructionDialog by remember { mutableStateOf(false) }
 
     var showBookmarks by remember { mutableStateOf(false) }
+    var showHighlights by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showLobDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
@@ -1544,6 +1832,8 @@ fun ReaderScreen(reader: Reader) {
 
     var splitMode by remember { mutableStateOf(SplitMode.SPLIT_BOTH) }
     var showOcrConfirmDialog by remember { mutableStateOf(false) }
+    var showForceOcrDialog by remember { mutableStateOf(false) }
+    var ocrDialogMessage by remember { mutableStateOf("") }
     var isZenMode by remember { mutableStateOf(false) }
 
     val window = (ctx as? Activity)?.window
@@ -1697,7 +1987,10 @@ fun ReaderScreen(reader: Reader) {
                                 SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
                             }
                         },
-                        onSetSplitMode = { splitMode = it },
+                        onSetSplitMode = {
+                            splitMode = it
+                            showGoogleSearchBanner = false
+                        },
                         pickBook = pickBook,
                         pickVocab = pickVocab,
                         pickTree = pickTree,
@@ -1764,41 +2057,97 @@ fun ReaderScreen(reader: Reader) {
     Surface(Modifier.fillMaxSize()) {
         if (showAppInfoDialog) {
             val currentVer = remember { getCurrentAppVersionName(ctx) }
+            val uriHandler = LocalUriHandler.current
+            val repoUrl = "https://github.com/ohidsajol/PdfHelperReader"
             AlertDialog(
                 onDismissRequest = { showAppInfoDialog = false },
-                title = { Text("App & Developer Info") },
+                title = { Text("App & Developer Info", fontWeight = FontWeight.Bold) },
                 text = {
                     Column(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 460.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = MaterialTheme.shapes.small,
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text("DualPDF Reader ($currentVer)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                Text("Advanced Dual-Pane eBook & Vocabulary Reader", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text("PdfHelperReader (v$currentVer)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Spacer(Modifier.height(2.dp))
+                                Text("Advanced Dual-Pane Document & Vocabulary Reader", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
                             }
                         }
 
-                        Text("Developer:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                        Text("Ohid Sajol", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Developer:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text("Ohid Sajol", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        }
 
-                        Spacer(Modifier.height(4.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("GitHub Repository:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        try {
+                                            uriHandler.openUri(repoUrl)
+                                        } catch (e: Exception) {
+                                            try {
+                                                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(repoUrl)).apply {
+                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                })
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "github.com/ohidsajol/PdfHelperReader",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            textDecoration = TextDecoration.Underline,
+                                            fontWeight = FontWeight.SemiBold
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "↗",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
 
-                        Text("GitHub Repository:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                        Text("github.com/ohidsajol/PdfHelperReader", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
-
-                        Spacer(Modifier.height(4.dp))
-
-                        Text("About App:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                        Text(
-                            "DualPDF Reader is designed for deep reading, language learning, and research. It features synchronized dual-pane reading, automatic vocabulary sidecar PDF generation, 964k-word dictionary, full EPUB & PDF support, Project Gutenberg library search, and on-device ML Kit OCR.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("About Application:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "PdfHelperReader is an advanced document and language study reader built for deep reading, research, and vocabulary acquisition. Key features include:\n\n" +
+                                    "• Synchronized Dual-Pane Reading: Compare translations, study sidecars, or view multiple sections side-by-side with independent or synced scrolling.\n" +
+                                    "• Auto-Vocabulary PDF Generator: Instantly generate sidecar vocabulary study PDFs with word frequencies, CEFR levels, and contextual definitions.\n" +
+                                    "• 964k-Word Offline Dictionary: Instant lookup for definitions, inflections, pronunciation, and usage without an internet connection.\n" +
+                                    "• Smooth Pinch-to-Zoom: Two-finger zoom anchored directly around each pane's center.\n" +
+                                    "• Multi-Page Highlights & Annotations: Seamless text selection across page boundaries with unified highlight management.\n" +
+                                    "• On-Device ML Kit OCR: Extract text from scanned PDFs and images, with Force OCR override for text-over-image documents.\n" +
+                                    "• Project Gutenberg Catalog: Search and download from over 70,000 free classic books directly within the app.\n" +
+                                    "• Intelligent Cache & Storage: Auto-manages downloaded books and temporary renders (500 MB quota) to keep storage footprint minimal.\n" +
+                                    "• In-App GitHub Updates: Check for and install new releases directly from GitHub.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 18.sp
+                            )
+                        }
                     }
                 },
                 confirmButton = {
@@ -1861,6 +2210,19 @@ fun ReaderScreen(reader: Reader) {
                     }
                 },
                 confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("Close") } }
+            )
+        }
+
+        if (showHighlights) {
+            HighlightsDialog(
+                reader = reader,
+                onDismiss = { showHighlights = false },
+                onJumpToPage = { targetPage ->
+                    reader.setBookPage(targetPage)
+                    scope.launch {
+                        bookListState.scrollToItem(targetPage, 0)
+                    }
+                }
             )
         }
 
@@ -2284,8 +2646,50 @@ fun ReaderScreen(reader: Reader) {
             )
         }
 
+        val startOcr: (Boolean) -> Unit = { force ->
+            isOcrGenerating = true
+            ocrProgressCurrent = 0
+            ocrProgressTotal = 0
+            reader.generateOcr(
+                forceOcr = force,
+                onProgress = { c, t ->
+                    ocrProgressCurrent = c
+                    ocrProgressTotal = t
+                },
+                onDone = { generatedTempFile ->
+                    try {
+                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        val ocrDir = File(downloadsDir, "PdfHelperReader_files")
+                        if (!ocrDir.exists()) ocrDir.mkdirs()
+                        
+                        val originalName = reader.book.name?.removeSuffix(".pdf") ?: "book"
+                        val baseName = originalName.removeSuffix("_ocr")
+                        val expectedName = "${baseName}_ocr.pdf"
+                        val destFile = File(ocrDir, expectedName)
+                        if (destFile.exists()) destFile.delete()
+                        
+                        generatedTempFile.copyTo(destFile, overwrite = true)
+                        generatedTempFile.delete()
+                        
+                        android.media.MediaScannerConnection.scanFile(
+                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                        )
+                        
+                        reader.onBookPicked(Uri.fromFile(destFile))
+                    } catch (e: Exception) {
+                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                    isOcrGenerating = false
+                },
+                onError = {
+                    isOcrGenerating = false
+                    Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+
         Box(Modifier.fillMaxSize()) {
-            if (showOcrConfirmDialog) {
+            if (showOcrConfirmDialog && !reader.isBookEpub && !reader.isCurrentBookEpub()) {
                 AlertDialog(
                     onDismissRequest = { showOcrConfirmDialog = false },
                     title = { Text("Confirm OCR") },
@@ -2293,47 +2697,33 @@ fun ReaderScreen(reader: Reader) {
                     confirmButton = {
                         TextButton(onClick = {
                             showOcrConfirmDialog = false
-                            isOcrGenerating = true
-                            ocrProgressCurrent = 0
-                            ocrProgressTotal = 0
-                            reader.generateOcr(
-                                onProgress = { c, t ->
-                                    ocrProgressCurrent = c
-                                    ocrProgressTotal = t
-                                },
-                                onDone = { generatedTempFile ->
-                                    try {
-                                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                        val ocrDir = File(downloadsDir, "PdfHelperReader_files")
-                                        if (!ocrDir.exists()) ocrDir.mkdirs()
-                                        
-                                        val originalName = reader.book.name?.removeSuffix(".pdf") ?: "book"
-                                        val expectedName = "${originalName}_ocr.pdf"
-                                        val destFile = File(ocrDir, expectedName)
-                                        if (destFile.exists()) destFile.delete()
-                                        
-                                        generatedTempFile.copyTo(destFile, overwrite = true)
-                                        generatedTempFile.delete()
-                                        
-                                        android.media.MediaScannerConnection.scanFile(
-                                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
-                                        )
-                                        
-                                        reader.onBookPicked(Uri.fromFile(destFile))
-                                    } catch (e: Exception) {
-                                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                    isOcrGenerating = false
-                                },
-                                onError = {
-                                    isOcrGenerating = false
-                                    Toast.makeText(ctx, "Error: ${it.message}", Toast.LENGTH_LONG).show()
-                                }
-                            )
+                            startOcr(false)
                         }) { Text("Confirm") }
                     },
                     dismissButton = {
                         TextButton(onClick = { showOcrConfirmDialog = false }) { Text("Cancel") }
+                    }
+                )
+            }
+
+            if (showForceOcrDialog && !reader.isBookEpub && !reader.isCurrentBookEpub()) {
+                AlertDialog(
+                    onDismissRequest = { showForceOcrDialog = false },
+                    title = { Text("Document Does Not Need OCR") },
+                    text = {
+                        Text(
+                            (if (ocrDialogMessage.isNotBlank()) "$ocrDialogMessage\n\n" else "") +
+                            "Would you like to force OCR anyway? This will recognize text on all pages and create a new searchable PDF in Downloads/PdfHelperReader_files."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showForceOcrDialog = false
+                            startOcr(true)
+                        }) { Text("Force OCR") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showForceOcrDialog = false }) { Text("Cancel") }
                     }
                 )
             }
@@ -2368,7 +2758,10 @@ fun ReaderScreen(reader: Reader) {
                             onClick = onClick,
                             enabled = enabled,
                             contentPadding = PaddingValues(horizontal = 4.dp),
-                            colors = ButtonDefaults.textButtonColors(contentColor = fontColor)
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = fontColor,
+                                disabledContentColor = fontColor.copy(alpha = 0.35f)
+                            )
                         ) {
                             if (content != null) {
                                 content()
@@ -2377,7 +2770,7 @@ fun ReaderScreen(reader: Reader) {
                                     text = text,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = fontColor
+                                    color = if (enabled) fontColor else fontColor.copy(alpha = 0.35f)
                                 )
                             }
                         }
@@ -2395,6 +2788,11 @@ fun ReaderScreen(reader: Reader) {
                     RibbonBtn(
                         onClick = { showBookmarks = true },
                         text = "BL"
+                    )
+
+                    RibbonBtn(
+                        onClick = { showHighlights = true },
+                        text = "HL"
                     )
 
                     RibbonBtn(
@@ -2547,8 +2945,20 @@ fun ReaderScreen(reader: Reader) {
                     )
 
                     if (reader.book.doc != null) {
+                        val isEpub = reader.isBookEpub || reader.isCurrentBookEpub()
                         RibbonBtn(
-                            onClick = { showOcrConfirmDialog = true },
+                            enabled = !isEpub,
+                            onClick = {
+                                scope.launch {
+                                    val statusMsg = reader.checkOcrStatus()
+                                    if (statusMsg != null) {
+                                        ocrDialogMessage = statusMsg
+                                        showForceOcrDialog = true
+                                    } else {
+                                        showOcrConfirmDialog = true
+                                    }
+                                }
+                            },
                             text = "O"
                         )
                     }
@@ -2624,7 +3034,10 @@ fun ReaderScreen(reader: Reader) {
                             SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
                         }
                     },
-                    onSetSplitMode = { splitMode = it },
+                    onSetSplitMode = {
+                        splitMode = it
+                        showGoogleSearchBanner = false
+                    },
                     pickBook = pickBook,
                     pickVocab = pickVocab,
                     pickTree = pickTree,
@@ -2646,7 +3059,7 @@ fun ReaderScreen(reader: Reader) {
                             Text("OCRing PDF...", style = MaterialTheme.typography.titleSmall)
                             Spacer(Modifier.height(16.dp))
                             if (ocrProgressTotal > 0) {
-                                val progress = genProgressCurrent.toFloat() / genProgressTotal
+                                val progress = ocrProgressCurrent.toFloat() / ocrProgressTotal
                                 val percentage = (progress * 100).toInt()
                                 LinearProgressIndicator(
                                     progress = { progress },
@@ -2879,7 +3292,12 @@ fun PdfPane(
                 )
         ) {
             if (isGoogleWebInVocab) {
-                GoogleWebView(reader.googleSearchQuery, onBackToVocab = { reader.vocabMode = VocabMode.VOCAB_PDF })
+                GoogleWebView(
+                    url = reader.googleSearchQuery,
+                    rawQuery = reader.googleRawQuery,
+                    searchToken = reader.googleSearchToken,
+                    onBackToVocab = { reader.vocabMode = VocabMode.VOCAB_PDF }
+                )
             } else {
                 val doc = pane.doc
                 if (doc != null) {
@@ -2898,9 +3316,11 @@ fun PdfPane(
                             isDarkMode = isDarkMode,
                             pane = pane,
                             onPage = onPage,
+                            reader = reader,
                             externalListState = externalListState,
                             isZenMode = isZenMode,
-                            onToggleZenControls = onToggleZenControls
+                            onToggleZenControls = onToggleZenControls,
+                            onOpenGoogle = { onSetSplitMode(SplitMode.SPLIT_BOTH) }
                         )
                     } else {
                         PageView(
@@ -2909,8 +3329,10 @@ fun PdfPane(
                             isDarkMode = isDarkMode,
                             pane = pane,
                             onPage = onPage,
+                            reader = reader,
                             isZenMode = isZenMode,
-                            onToggleZenControls = onToggleZenControls
+                            onToggleZenControls = onToggleZenControls,
+                            onOpenGoogle = { onSetSplitMode(SplitMode.SPLIT_BOTH) }
                         )
                     }
                 } else {
@@ -3156,6 +3578,63 @@ fun PaneBar(label: String, pane: Pane, onPage: (Int) -> Unit) {
     }
 }
 
+/**
+ * Detects two-finger pinch-to-zoom gestures at [PointerEventPass.Initial] so child
+ * gesture detectors (tap, double-tap, long-press, selection handles, scroll) do not
+ * intercept or cancel the pinch gesture.
+ *
+ * Uses [speedFactor] (default 0.085f) for a relaxed, fine-grained, smooth zoom feel.
+ * Provides [zoomRatio] (newZoom / currentZoom) and [newZoom].
+ */
+fun Modifier.pinchToZoom(
+    zoomState: () -> Float,
+    onZoomChange: (zoomRatio: Float, newZoom: Float) -> Unit,
+    minZoom: Float = 1.0f,
+    maxZoom: Float = 5.0f,
+    speedFactor: Float = 0.085f,
+    enabled: Boolean = true
+): Modifier = this.pointerInput(enabled) {
+    if (!enabled) return@pointerInput
+    awaitEachGesture {
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+        } while (event.changes.none { it.pressed })
+
+        var previousDistance: Float? = null
+
+        while (true) {
+            val currentEvent = awaitPointerEvent(PointerEventPass.Initial)
+            val pressedChanges = currentEvent.changes.filter { it.pressed }
+
+            if (pressedChanges.size < 2) {
+                previousDistance = null
+                if (pressedChanges.isEmpty()) {
+                    break
+                }
+            } else {
+                val p1 = pressedChanges[0]
+                val p2 = pressedChanges[1]
+                val currentDistance = kotlin.math.hypot(p1.position.x - p2.position.x, p1.position.y - p2.position.y)
+
+                if (previousDistance != null && previousDistance > 20f && currentDistance > 20f) {
+                    val rawFactor = currentDistance / previousDistance
+                    val dampedFactor = 1f + (rawFactor - 1f) * speedFactor
+                    val currentZoom = zoomState()
+                    val newZoom = (currentZoom * dampedFactor).coerceIn(minZoom, maxZoom)
+                    val effectiveZoomRatio = if (currentZoom > 0f) newZoom / currentZoom else 1f
+
+                    if (kotlin.math.abs(newZoom - currentZoom) > 0.0005f) {
+                        onZoomChange(effectiveZoomRatio, newZoom)
+                    }
+                }
+
+                previousDistance = currentDistance
+                pressedChanges.forEach { it.consume() }
+            }
+        }
+    }
+}
+
 /** Renders one page fit-to-width inside a scrollable area with pinch-to-zoom, centering, and horizontal page swiping. */
 @Composable
 fun PageView(
@@ -3164,15 +3643,44 @@ fun PageView(
     isDarkMode: Boolean,
     pane: Pane,
     onPage: (Int) -> Unit,
+    reader: Reader,
     isZenMode: Boolean = false,
-    onToggleZenControls: () -> Unit = {}
+    onToggleZenControls: () -> Unit = {},
+    onOpenGoogle: (() -> Unit)? = null
 ) {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
-        var image by remember(doc) { mutableStateOf<ImageBitmap?>(null) }
-        var ocrBoxes by remember(doc, page) { mutableStateOf<List<OcrBox>>(emptyList()) }
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .then(
+                if (isZenMode) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = { onToggleZenControls() },
+                            onTap = {
+                                pane.activeSelection = null
+                                pane.activeHighlightMenu = null
+                            }
+                        )
+                    }
+                } else {
+                    Modifier.pointerInput(pane) {
+                        detectTapGestures(
+                            onTap = {
+                                pane.activeSelection = null
+                                pane.activeHighlightMenu = null
+                            }
+                        )
+                    }
+                }
+            )
+    ) {
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.roundToPx() }
+        val heightPx = with(density) { maxHeight.roundToPx() }
+        var image by remember(doc, page) { 
+            mutableStateOf<ImageBitmap?>(doc.getAnyCachedBitmap(page)?.asImageBitmap()) 
+        }
         var error by remember(doc) { mutableStateOf<String?>(null) }
-        var loading by remember(doc) { mutableStateOf(true) }
         val verticalScrollState = rememberScrollState()
         val horizontalScrollState = rememberScrollState()
 
@@ -3182,24 +3690,18 @@ fun PageView(
         }
 
         LaunchedEffect(doc, page, widthPx, pane.zoom) {
-            loading = true
             error = null
             try {
+                if (image != null) delay(150)
                 val targetW = renderWidth(widthPx, pane.zoom)
-                
                 val bmp = doc.render(page, targetW)
                 bmp.prepareToDraw()
                 image = bmp.asImageBitmap()
-                loading = false
-                ocrBoxes = extractOcrBoxes(doc, page, bmp)
-                
-                doc.preloadRange(page, targetW, radius = 3)
+                doc.preloadRange(page, targetW, radius = 2)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 error = e.message ?: "Could not render this page"
-            } finally {
-                loading = false
             }
         }
 
@@ -3213,85 +3715,65 @@ fun PageView(
         }
         val colorFilter = if (isDarkMode) androidx.compose.ui.graphics.ColorFilter.colorMatrix(invertMatrix) else null
 
-        val focusManager = LocalFocusManager.current
+        val ratio = doc.getPageRatio(page) ?: 0.707f
         val displayedW = with(LocalDensity.current) { (widthPx * pane.zoom).toDp() }
+        val displayedH = with(LocalDensity.current) { ((widthPx * pane.zoom) / ratio).toDp() }
 
-        SelectionContainer {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(doc, page, isZenMode) {
-                        detectTapGestures(
-                            onTap = {
-                                focusManager.clearFocus()
-                            },
-                            onDoubleTap = { offset ->
-                                if (isZenMode) {
-                                    onToggleZenControls()
-                                } else {
-                                    val totalCount = doc.pageCount
-                                    val halfWidth = size.width / 2f
-                                    if (offset.x > halfWidth) {
-                                        if (pane.page < totalCount - 1) {
-                                            onPage(pane.page + 1)
-                                        }
-                                    } else {
-                                        if (pane.page > 0) {
-                                            onPage(pane.page - 1)
-                                        }
-                                    }
-                                }
-                            }
-                        )
-                    }
-                    .pointerInput(doc, page) {
-                        detectTransformGestures { _, _, zoomChange, _ ->
-                            val newZoom = (pane.zoom * zoomChange).coerceIn(1.0f, 5.0f)
-                            if (kotlin.math.abs(newZoom - pane.zoom) > 0.01f) {
-                                pane.zoom = newZoom
-                            }
+        LaunchedEffect(pane.zoom) {
+            if (pane.zoom <= 1.01f) {
+                horizontalScrollState.scrollTo(0)
+                verticalScrollState.scrollTo(0)
+            } else {
+                val targetScrollX = ((widthPx * (pane.zoom - 1f)) / 2f).roundToInt()
+                horizontalScrollState.scrollTo(targetScrollX)
+                val pageH = (widthPx * pane.zoom) / ratio
+                if (pageH > heightPx) {
+                    val targetScrollY = ((pageH - heightPx) / 2f).roundToInt()
+                    verticalScrollState.scrollTo(targetScrollY)
+                }
+            }
+        }
+
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pinchToZoom(
+                    zoomState = { pane.zoom },
+                    onZoomChange = { _, newZoom ->
+                        pane.zoom = newZoom
+                    },
+                    speedFactor = 0.085f,
+                    enabled = !pane.isDraggingSelection
+                )
+                .horizontalScroll(horizontalScrollState, enabled = pane.zoom > 1.01f && !pane.isDraggingSelection)
+                .verticalScroll(verticalScrollState, enabled = !pane.isDraggingSelection),
+            contentAlignment = Alignment.Center
+        ) {
+            InteractivePdfPage(
+                doc = doc,
+                pageIndex = page,
+                bitmap = image,
+                displayedWidth = displayedW,
+                displayedHeight = displayedH,
+                colorFilter = colorFilter,
+                pane = pane,
+                reader = reader,
+                isZenMode = isZenMode,
+                onToggleZenControls = onToggleZenControls,
+                onDoubleTapPage = { offset ->
+                    val totalCount = doc.pageCount
+                    val halfWidth: Float = with(density) { displayedW.toPx() } / 2.0f
+                    if (offset.x > halfWidth) {
+                        if (pane.page < totalCount - 1) {
+                            onPage(pane.page + 1)
                         }
-                    }
-                    .horizontalScroll(horizontalScrollState)
-                    .verticalScroll(verticalScrollState),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier.width(displayedW)
-                ) {
-                    image?.let { bmp ->
-                        val displayedH = with(LocalDensity.current) { (displayedW.toPx() * (bmp.height.toFloat() / bmp.width.toFloat())).toDp() }
-
-                        Image(
-                            bitmap = bmp,
-                            contentDescription = "PDF page ${page + 1}",
-                            modifier = Modifier.width(displayedW),
-                            contentScale = ContentScale.FillWidth,
-                            filterQuality = FilterQuality.Medium,
-                            colorFilter = colorFilter
-                        )
-
-                        Box(Modifier.matchParentSize()) {
-                            ocrBoxes.forEach { box ->
-                                Text(
-                                    text = box.text,
-                                    color = androidx.compose.ui.graphics.Color.Transparent,
-                                    fontSize = with(LocalDensity.current) { ((box.bottom - box.top) * displayedH.value * 0.85f).dp.toSp() },
-                                    softWrap = false,
-                                    maxLines = 1,
-                                    modifier = Modifier
-                                        .absoluteOffset(
-                                            x = (box.left * displayedW.value).dp,
-                                            y = (box.top * displayedH.value).dp
-                                        )
-                                        .width(((box.right - box.left) * displayedW.value).dp)
-                                        .height(((box.bottom - box.top) * displayedH.value).dp)
-                                )
-                            }
+                    } else {
+                        if (pane.page > 0) {
+                            onPage(pane.page - 1)
                         }
                     }
                 }
-            }
+            )
         }
 
         if (image == null) {
@@ -3300,6 +3782,18 @@ fun PageView(
         error?.let {
             Text(it, color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.align(Alignment.Center).padding(16.dp))
+        }
+
+        // Sticky Action Toolbar Overlay in PageView (fixed at top, does not scroll with document)
+        val activeSel = pane.activeSelection
+        if (activeSel != null && !pane.isDraggingSelection) {
+            val marginPx = with(density) { 10.dp.toPx() }
+            PaneSelectionToolbar(pane, doc, reader, marginPx, onOpenGoogle = onOpenGoogle)
+        }
+        val activeHighlight = pane.activeHighlightMenu
+        if (activeHighlight != null && activeSel == null && !pane.isDraggingSelection) {
+            val marginPx = with(density) { 10.dp.toPx() }
+            PaneHighlightToolbar(pane, reader, activeHighlight, marginPx, onOpenGoogle = onOpenGoogle)
         }
     }
 }
@@ -3514,7 +4008,7 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrent
     if (conn.responseCode in 200..399) {
         val jsonStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         val root = Gson().fromJson(jsonStr, com.google.gson.JsonObject::class.java)
-        val latestTag = root.get("tag_name")?.asString ?: "v3.2.1"
+        val latestTag = root.get("tag_name")?.asString ?: "v4.0.0"
         val releaseTitle = root.get("name")?.asString ?: "PdfHelperReader Update"
         val releaseNotes = root.get("body")?.asString ?: ""
 
@@ -3554,8 +4048,9 @@ suspend fun downloadAppUpdateApk(
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (!downloadsDir.exists()) downloadsDir.mkdirs()
 
-            val currentVer = getCurrentAppVersionName(ctx)
-            val updateApkFile = File(downloadsDir, "PdfHelperReader-$currentVer.apk")
+            val fileName = downloadUrl.substringAfterLast("/").takeIf { it.endsWith(".apk") }
+                ?: "PdfHelperReader-v4.0.0.apk"
+            val updateApkFile = File(downloadsDir, fileName)
             if (updateApkFile.exists()) {
                 runCatching { updateApkFile.delete() }
             }
@@ -4028,20 +4523,211 @@ fun TextView(
 }
 
 @Composable
+fun PaneSelectionToolbar(
+    pane: Pane,
+    doc: PdfDoc,
+    reader: Reader,
+    finalTopPx: Float,
+    onOpenGoogle: (() -> Unit)? = null
+) {
+    val activeSel = pane.activeSelection ?: return
+    val ctx = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset { IntOffset(0, finalTopPx.roundToInt()) }
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        SelectionFloatingToolbar(
+            onHighlight = { colorHex ->
+                val sel = pane.activeSelection ?: activeSel
+                val groupId = UUID.randomUUID().toString()
+                val newHighlights = (sel.minPage..sel.maxPage).mapNotNull { p ->
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pRange = sel.wordRangeForPage(p, pWords.size)
+                    if (pRange != null && pWords.isNotEmpty()) {
+                        val pText = PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last)
+                            .filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+                        val pRects = PdfTextHelper.getSelectionRects(pWords, pRange.first, pRange.last)
+                        if (pText.isNotBlank()) {
+                            Highlight(
+                                pageIndex = p,
+                                text = pText,
+                                colorHex = colorHex,
+                                rects = pRects,
+                                groupId = groupId
+                            )
+                        } else null
+                    } else null
+                }
+                if (newHighlights.isNotEmpty()) {
+                    reader.addHighlights(newHighlights)
+                    Toast.makeText(ctx, "Highlighted!", Toast.LENGTH_SHORT).show()
+                }
+                pane.activeSelection = null
+            },
+            onCopy = {
+                val sel = pane.activeSelection ?: activeSel
+                val fullText = (sel.minPage..sel.maxPage).mapNotNull { p ->
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pRange = sel.wordRangeForPage(p, pWords.size)
+                    if (pRange != null && pWords.isNotEmpty()) {
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                    } else null
+                }.joinToString("\n").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+                android.util.Log.i("SelectionDebug", "onCopy: sel=$sel, textLen=${fullText.length}, preview='${fullText.take(100)}' ... '${fullText.takeLast(100)}'")
+                if (fullText.isNotBlank()) {
+                    clipboardManager.setText(AnnotatedString(fullText))
+                    Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                }
+                pane.activeSelection = null
+            },
+            onSearch = {
+                val sel = pane.activeSelection ?: activeSel
+                val fullText = (sel.minPage..sel.maxPage).mapNotNull { p ->
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pRange = sel.wordRangeForPage(p, pWords.size)
+                    if (pRange != null && pWords.isNotEmpty()) {
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                    } else null
+                }.joinToString(" ")
+                val cleanQuery = fullText.filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
+                android.util.Log.i("SelectionDebug", "onSearch: sel=$sel, queryLen=${cleanQuery.length}, preview='${cleanQuery.take(100)}' ... '${cleanQuery.takeLast(100)}'")
+                if (cleanQuery.isNotBlank()) {
+                    reader.searchGoogle(cleanQuery)
+                    onOpenGoogle?.invoke()
+                }
+                pane.activeSelection = null
+            },
+            onShare = {
+                val sel = pane.activeSelection ?: activeSel
+                val fullText = (sel.minPage..sel.maxPage).mapNotNull { p ->
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pRange = sel.wordRangeForPage(p, pWords.size)
+                    if (pRange != null && pWords.isNotEmpty()) {
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                    } else null
+                }.joinToString("\n").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+                if (fullText.isNotBlank()) {
+                    val sendIntent = Intent().apply {
+                        action = Intent.ACTION_SEND
+                        putExtra(Intent.EXTRA_TEXT, fullText)
+                        type = "text/plain"
+                    }
+                    ctx.startActivity(Intent.createChooser(sendIntent, "Share text"))
+                }
+                pane.activeSelection = null
+            },
+            onSelectAll = {
+                val sel = pane.activeSelection ?: activeSel
+                if (!sel.isSinglePage) {
+                    // Multi-page selection -> select entire document
+                    val lastPage = (doc.pageCount - 1).coerceAtLeast(0)
+                    val lastWords = doc.getWords(lastPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), lastPage)
+                    val lastWordIdx = (lastWords.size - 1).coerceAtLeast(0)
+                    pane.activeSelection = TextSelection(
+                        startPageIndex = 0,
+                        startWordIndex = 0,
+                        endPageIndex = lastPage,
+                        endWordIndex = lastWordIdx
+                    )
+                } else {
+                    // Single-page selection -> select all words on the current page
+                    val curPage = sel.startPageIndex
+                    val pageWords = doc.getWords(curPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), curPage)
+                    if (pageWords.isNotEmpty()) {
+                        pane.activeSelection = TextSelection(
+                            startPageIndex = curPage,
+                            startWordIndex = 0,
+                            endPageIndex = curPage,
+                            endWordIndex = pageWords.size - 1
+                        )
+                    }
+                }
+            },
+            onDismiss = {
+                pane.activeSelection = null
+            }
+        )
+    }
+}
+
+@Composable
+fun PaneHighlightToolbar(
+    pane: Pane,
+    reader: Reader,
+    highlight: Highlight,
+    finalTopPx: Float,
+    onOpenGoogle: (() -> Unit)? = null
+) {
+    val ctx = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset { IntOffset(0, finalTopPx.roundToInt()) }
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        ExistingHighlightToolbar(
+            highlight = highlight,
+            onColorChange = { newColorHex ->
+                reader.updateHighlightColor(highlight, newColorHex)
+                pane.activeHighlightMenu = null
+            },
+            onDelete = {
+                reader.removeHighlight(highlight)
+                Toast.makeText(ctx, "Highlight deleted", Toast.LENGTH_SHORT).show()
+                pane.activeHighlightMenu = null
+            },
+            onCopy = {
+                val related = reader.getRelatedHighlights(highlight)
+                val fullText = related.joinToString("\n") { it.text }
+                    .filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+                if (fullText.isNotBlank()) {
+                    clipboardManager.setText(AnnotatedString(fullText))
+                    Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                }
+                pane.activeHighlightMenu = null
+            },
+            onSearch = {
+                val related = reader.getRelatedHighlights(highlight)
+                val fullQuery = related.joinToString(" ") { it.text }
+                    .filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
+                if (fullQuery.isNotBlank()) {
+                    reader.searchGoogle(fullQuery)
+                    onOpenGoogle?.invoke()
+                }
+                pane.activeHighlightMenu = null
+            },
+            onDismiss = {
+                pane.activeHighlightMenu = null
+            }
+        )
+    }
+}
+
+@Composable
 fun ContinuousPageView(
     doc: PdfDoc,
     isDarkMode: Boolean,
     pane: Pane,
     onPage: (Int) -> Unit,
+    reader: Reader,
     externalListState: androidx.compose.foundation.lazy.LazyListState? = null,
     isZenMode: Boolean = false,
-    onToggleZenControls: () -> Unit = {}
+    onToggleZenControls: () -> Unit = {},
+    onOpenGoogle: (() -> Unit)? = null
 ) {
     val listState = externalListState ?: rememberLazyListState(initialFirstVisibleItemIndex = pane.page)
 
     LaunchedEffect(doc, pane.page) {
-        if (!listState.isScrollInProgress && pane.page in 0 until doc.pageCount) {
-            if (kotlin.math.abs(pane.page - listState.firstVisibleItemIndex) > 1 || listState.firstVisibleItemIndex == 0) {
+        if (!pane.isDraggingSelection && !listState.isScrollInProgress && pane.page in 0 until doc.pageCount) {
+            if (kotlin.math.abs(pane.page - listState.firstVisibleItemIndex) > 1) {
                 listState.scrollToItem(pane.page)
             }
         }
@@ -4071,7 +4757,7 @@ fun ContinuousPageView(
     }
 
     LaunchedEffect(pane.page) {
-        if (!listState.isScrollInProgress && kotlin.math.abs(pane.page - listState.firstVisibleItemIndex) > 1) {
+        if (!pane.isDraggingSelection && !listState.isScrollInProgress && kotlin.math.abs(pane.page - listState.firstVisibleItemIndex) > 1) {
             listState.scrollToItem(pane.page)
         }
     }
@@ -4083,25 +4769,120 @@ fun ContinuousPageView(
                 if (isZenMode) {
                     Modifier.pointerInput(Unit) {
                         detectTapGestures(
-                            onDoubleTap = { onToggleZenControls() }
+                            onDoubleTap = { onToggleZenControls() },
+                            onTap = {
+                                pane.activeSelection = null
+                                pane.activeHighlightMenu = null
+                            }
                         )
                     }
-                } else Modifier
+                } else {
+                    Modifier.pointerInput(pane) {
+                        detectTapGestures(
+                            onTap = {
+                                pane.activeSelection = null
+                                pane.activeHighlightMenu = null
+                            }
+                        )
+                    }
+                }
             )
     ) {
-        val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            items(
-                count = doc.pageCount,
-                key = { it }
-            ) { index ->
-                ContinuousPageItem(doc, index, widthPx, isDarkMode, pane, listState, isZenMode, onToggleZenControls)
-                Spacer(Modifier.height(16.dp))
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.roundToPx() }
+        val heightPx = with(density) { maxHeight.roundToPx() }
+        val paneCenterY = heightPx / 2f
+        val coroutineScope = rememberCoroutineScope()
+        val onRequestScroll: (Float) -> Unit = { delta ->
+            coroutineScope.launch {
+                listState.scrollBy(delta)
             }
+        }
+        val horizontalScrollState = rememberScrollState()
+        val totalWidth = with(density) { (widthPx * pane.zoom).toDp() }
+
+        LaunchedEffect(pane.zoom) {
+            if (pane.zoom <= 1.01f) {
+                horizontalScrollState.scrollTo(0)
+            } else {
+                val targetScrollX = ((widthPx * (pane.zoom - 1f)) / 2f).roundToInt()
+                horizontalScrollState.scrollTo(targetScrollX)
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pinchToZoom(
+                    zoomState = { pane.zoom },
+                    onZoomChange = { zoomRatio, newZoom ->
+                        val oldZoom = pane.zoom
+                        pane.zoom = newZoom
+                        if (newZoom > 1.005f || oldZoom > 1.005f) {
+                            val deltaY = (listState.firstVisibleItemScrollOffset + paneCenterY) * (zoomRatio - 1f)
+                            listState.dispatchRawDelta(-deltaY)
+                        }
+                    },
+                    speedFactor = 0.085f,
+                    enabled = !pane.isDraggingSelection
+                )
+                .horizontalScroll(
+                    state = horizontalScrollState,
+                    enabled = pane.zoom > 1.01f && !pane.isDraggingSelection
+                )
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .width(totalWidth)
+                    .fillMaxHeight(),
+                userScrollEnabled = !pane.isDraggingSelection,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                items(
+                    count = doc.pageCount,
+                    key = { it }
+                ) { index ->
+                    ContinuousPageItem(
+                        doc = doc,
+                        index = index,
+                        widthPx = widthPx,
+                        isDarkMode = isDarkMode,
+                        pane = pane,
+                        reader = reader,
+                        isZenMode = isZenMode,
+                        onToggleZenControls = onToggleZenControls,
+                        onRequestScroll = onRequestScroll
+                    )
+                    Spacer(
+                        Modifier
+                            .height(16.dp)
+                            .fillMaxWidth()
+                            .pointerInput(pane) {
+                                detectTapGestures(
+                                    onTap = {
+                                        if (!pane.isDraggingSelection) {
+                                            pane.activeSelection = null
+                                            pane.activeHighlightMenu = null
+                                        }
+                                    }
+                                )
+                            }
+                    )
+                }
+            }
+        }
+
+        // Sticky Action Toolbar Overlay in ContinuousPageView (fixed at top, does not scroll with document)
+        val activeSel = pane.activeSelection
+        if (activeSel != null && !pane.isDraggingSelection) {
+            val marginPx = with(density) { 10.dp.toPx() }
+            PaneSelectionToolbar(pane, doc, reader, marginPx, onOpenGoogle = onOpenGoogle)
+        }
+        val activeHighlight = pane.activeHighlightMenu
+        if (activeHighlight != null && activeSel == null && !pane.isDraggingSelection) {
+            val marginPx = with(density) { 10.dp.toPx() }
+            PaneHighlightToolbar(pane, reader, activeHighlight, marginPx, onOpenGoogle = onOpenGoogle)
         }
     }
 }
@@ -4113,37 +4894,26 @@ fun ContinuousPageItem(
     widthPx: Int,
     isDarkMode: Boolean,
     pane: Pane,
-    listState: androidx.compose.foundation.lazy.LazyListState,
+    reader: Reader,
     isZenMode: Boolean = false,
-    onToggleZenControls: () -> Unit = {}
+    onToggleZenControls: () -> Unit = {},
+    onRequestScroll: ((Float) -> Unit)? = null
 ) {
     val ratio = doc.getPageRatio(index) ?: 0.707f // Default A4 ratio (1 / sqrt(2))
     
-    var image by remember(doc, index) { mutableStateOf<ImageBitmap?>(null) }
-    var ocrBoxes by remember(doc, index) { mutableStateOf<List<OcrBox>>(emptyList()) }
-    var loading by remember(doc, index) { mutableStateOf(true) }
-    val focusManager = LocalFocusManager.current
+    var image by remember(doc, index) { 
+        mutableStateOf<ImageBitmap?>(doc.getAnyCachedBitmap(index)?.asImageBitmap()) 
+    }
 
     LaunchedEffect(doc, index, widthPx, pane.zoom) {
-        loading = true
         try {
+            if (image != null) delay(150)
             val targetW = renderWidth(widthPx, pane.zoom)
-            
             val bmp = doc.render(index, targetW)
             bmp.prepareToDraw()
             image = bmp.asImageBitmap()
-            loading = false
-            
-            // Wait for scroll to settle before doing OCR
-            snapshotFlow { listState.isScrollInProgress }.first { !it }
-            kotlinx.coroutines.delay(150)
-            ocrBoxes = extractOcrBoxes(doc, index, bmp)
-            
-            doc.preloadRange(index, targetW, radius = 1)
-        } catch (e: Exception) {
-        } finally {
-            loading = false
-        }
+            doc.preloadRange(index, targetW, radius = 2)
+        } catch (_: Exception) {}
     }
 
     val invertMatrix = remember { 
@@ -4157,62 +4927,27 @@ fun ContinuousPageItem(
     val colorFilter = if (isDarkMode) androidx.compose.ui.graphics.ColorFilter.colorMatrix(invertMatrix) else null
 
     val displayedW = with(LocalDensity.current) { (widthPx * pane.zoom).toDp() }
+    val displayedH = with(LocalDensity.current) { ((widthPx * pane.zoom) / ratio).toDp() }
 
-    SelectionContainer {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(ratio)
-                .pointerInput(index, isZenMode) {
-                    detectTapGestures(
-                        onTap = {
-                            focusManager.clearFocus()
-                        },
-                        onDoubleTap = {
-                            if (isZenMode) {
-                                onToggleZenControls()
-                            }
-                        }
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier.width(displayedW)
-            ) {
-                image?.let { bmp ->
-                    val displayedH = with(LocalDensity.current) { (displayedW.toPx() * (bmp.height.toFloat() / bmp.width.toFloat())).toDp() }
-
-                    Image(
-                        bitmap = bmp,
-                        contentDescription = "Page ${index + 1}",
-                        modifier = Modifier.width(displayedW),
-                        contentScale = ContentScale.FillWidth,
-                        filterQuality = FilterQuality.Medium,
-                        colorFilter = colorFilter
-                    )
-
-                    Box(Modifier.matchParentSize()) {
-                        ocrBoxes.forEach { box ->
-                            Text(
-                                text = box.text,
-                                color = androidx.compose.ui.graphics.Color.Transparent,
-                                fontSize = with(LocalDensity.current) { ((box.bottom - box.top) * displayedH.value * 0.85f).dp.toSp() },
-                                softWrap = false,
-                                maxLines = 1,
-                                modifier = Modifier
-                                    .absoluteOffset(
-                                        x = (box.left * displayedW.value).dp,
-                                        y = (box.top * displayedH.value).dp
-                                    )
-                                    .width(((box.right - box.left) * displayedW.value).dp)
-                                    .height(((box.bottom - box.top) * displayedH.value).dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    Box(
+        modifier = Modifier
+            .width(displayedW)
+            .height(displayedH),
+        contentAlignment = Alignment.Center
+    ) {
+        InteractivePdfPage(
+            doc = doc,
+            pageIndex = index,
+            bitmap = image,
+            displayedWidth = displayedW,
+            displayedHeight = displayedH,
+            colorFilter = colorFilter,
+            pane = pane,
+            reader = reader,
+            isZenMode = isZenMode,
+            onToggleZenControls = onToggleZenControls,
+            onRequestScroll = onRequestScroll
+        )
         if (image == null) {
             Box(Modifier.fillMaxSize().background(if (isDarkMode) androidx.compose.ui.graphics.Color(0xFF222222) else androidx.compose.ui.graphics.Color(0xFFEEEEEE)))
         }
@@ -4220,17 +4955,75 @@ fun ContinuousPageItem(
 }
 
 @Composable
-fun GoogleWebView(url: String, onBackToVocab: () -> Unit = {}) {
+fun GoogleWebView(
+    url: String,
+    rawQuery: String = "",
+    searchToken: Long = 0L,
+    onBackToVocab: () -> Unit = {}
+) {
     var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
     var currentLoadedUrl by remember { mutableStateOf("") }
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
     var pageTitle by remember { mutableStateOf("Google Search") }
+    var lastInjectedToken by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(url) {
-        if (url != currentLoadedUrl && url.isNotBlank()) {
-            currentLoadedUrl = url
-            webViewRef?.loadUrl(url)
+    fun injectFullQueryIntoSearchBox(view: android.webkit.WebView?, pageUrl: String?) {
+        val sanitizedQuery = rawQuery.filter { it >= ' ' || it == '\n' || it == '\t' }
+        if (pageUrl?.contains("google.") != true || sanitizedQuery.isBlank()) return
+        if (lastInjectedToken == searchToken && searchToken != 0L) return
+        lastInjectedToken = searchToken
+
+        val escaped = org.json.JSONObject.quote(sanitizedQuery)
+        val js = """
+            (function() {
+                var fullText = $escaped;
+                if (!fullText) return;
+                function apply() {
+                    var selectors = [
+                        'textarea[name="q"]',
+                        'input[name="q"]',
+                        'textarea.gLFyf',
+                        'input.gLFyf',
+                        'input[type="search"]',
+                        'textarea',
+                        'input[type="text"]'
+                    ];
+                    for (var s = 0; s < selectors.length; s++) {
+                        var el = document.querySelector(selectors[s]);
+                        if (el) {
+                            var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
+                                || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                            if (nativeSetter) {
+                                nativeSetter.call(el, fullText);
+                            } else {
+                                el.value = fullText;
+                            }
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                            break;
+                        }
+                    }
+                }
+                apply();
+                setTimeout(apply, 300);
+                setTimeout(apply, 600);
+                setTimeout(apply, 1000);
+                setTimeout(apply, 1800);
+                setTimeout(apply, 2800);
+            })();
+        """.trimIndent()
+        view?.evaluateJavascript(js, null)
+    }
+
+    LaunchedEffect(url, searchToken) {
+        if (url.isNotBlank()) {
+            if (url != currentLoadedUrl) {
+                currentLoadedUrl = url
+                webViewRef?.loadUrl(url)
+            } else {
+                injectFullQueryIntoSearchBox(webViewRef, webViewRef?.url)
+            }
         }
     }
 
@@ -4309,6 +5102,7 @@ fun GoogleWebView(url: String, onBackToVocab: () -> Unit = {}) {
                             canGoBack = view?.canGoBack() == true
                             canGoForward = view?.canGoForward() == true
                             pageTitle = view?.title ?: "Google Search"
+                            injectFullQueryIntoSearchBox(view, pageUrl)
                         }
 
                         override fun doUpdateVisitedHistory(view: android.webkit.WebView?, pageUrl: String?, isReload: Boolean) {

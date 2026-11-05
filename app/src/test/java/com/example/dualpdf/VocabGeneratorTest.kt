@@ -228,6 +228,6 @@ class VocabGeneratorTest {
 
         assertTrue("Location header should contain /tag/, got: $location", location.contains("/tag/"))
         val latestTag = location.substringAfterLast("/tag/").trim().split("/", "?", "#").first()
-        assertEquals("v3.2.1", latestTag)
+        assertTrue("latestTag should start with v, got: $latestTag", latestTag.startsWith("v"))
     }
 }

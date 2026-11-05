@@ -1,68 +1,85 @@
-# PdfHelperReader (v3.0.0)
+# PdfHelperReader (v4.0.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK: 26](https://img.shields.io/badge/Min%20SDK-26-blue.svg)](https://android-arsenal.com/api?level=26)
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
-**PdfHelperReader** is a powerful, offline-first, dual-pane Android document reader designed specifically to assist users in reading foreign or complex literature. It reads both **PDF** and **EPUB** eBooks, automatically generates companion vocabulary sidecars, applies local on-device OCR to scanned documents, streams online classic books on-demand from GitHub, searches Project Gutenberg's 70,000+ catalog, includes seamless **in-app updates**, and provides a dual-document reading experience with synchronized state persistence and immersive reading modes.
+**PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
 
 ---
 
-## 🌟 Key Features in v3.0.0
+## 🌟 What's New in v4.0.0
 
-### 🚀 Instant First-Attempt File Deletion & Clean Trash Operations
-* **Zero MediaStore Locks**: Disables background MediaStore indexing scans on update APK files, preventing Android's `MediaProvider` SQLite transaction locks so downloaded update files can be deleted or moved to trash on the **very first attempt** without `"couldn't move to trash... error unknown"`.
+### 📑 Unified Multi-Page Highlights (`HL` Button)
+* **Single Entry for Multi-Page Spans**: Selecting and highlighting text that spans across multiple consecutive pages (e.g. Pages 31–34) now creates one unified highlight entry rather than fragmented records per page.
+* **Smart Page Badges & Navigation**: Displays multi-page range indicators (`Pages 31–34`), the full concatenated text excerpt, and navigates straight to the highlight's starting page with a single tap.
+* **Unified Deletion**: Tapping the trash icon on a grouped highlight removes all linked page segments across the entire document in one action.
 
-### 🔄 Clean User-Controlled Update Flow
-* **One-Tap Release Updates**: Rightmost `Update` button checks GitHub's latest release API (`/releases/latest`), compares installed version against GitHub latest release, and streams live download progress bytes (`Progress: 45% (13.2 MB / 29.0 MB)`).
-* **Direct `Downloads/` Destination**: Downloads the release APK file directly to your phone's main **`Downloads/`** folder (`Downloads/PdfHelperReader-v3.0.0.apk`).
-* **Clear Single-Button Instruction Dialog**: Displays an informative instruction dialog with a single **[ OK ]** button, explaining how to install the update by tapping the file in your Downloads folder while preserving 100% of your history and bookmarks.
+### 🤏 Center-Anchored Two-Finger Pinch-to-Zoom
+* **Even Multi-Directional Scaling**: Two-finger pinch-to-zoom expands and contracts symmetrically around the exact center point of each pane instead of drifting towards the top-left corner.
+* **Calibrated Sensitivity**: Zoom speed is finely calibrated with a `0.085f` smoothing factor for silky, controlled magnification.
+* **Full Reader Mode Parity**: Works seamlessly in both single-page mode (`PageView`) and vertical continuous scroll mode (`ContinuousPageView`).
 
-### 🎨 Alternating `#00796B` Font Color Styling
-* **Alternating Font Text Colors**: Upper action ribbon buttons keep their original clean button styling untouched while dynamically alternating button **font text colors** between `primary` and vibrant `#00796B` (Teal) for an elegant, high-contrast typography experience.
-
-### ℹ️ App & Developer Info (`App Info` Button)
-* Displays developer details (**Ohid Sajol**), GitHub repository URL (`github.com/ohidsajol/PdfHelperReader`), version info, and full application overview.
-
-### 📚 Expanded Online Library & Gutenberg Search (`LOB` Button)
-* **Dual-Tab Source Selection**:
-    * **Online Books**: Access 35 hand-picked classic books by Dostoevsky, Nietzsche, Wordsworth, and Byron, streamed on-demand from GitHub raw CDN repository.
-    * **Gutenberg Books**: Real-time browser and search engine for Project Gutenberg's 70,000+ catalog.
-* **Official Gutenberg Search Engine**: Search any book title or author across Project Gutenberg with instant debounced results and popular books showcase (*Pride and Prejudice*, *Frankenstein*, *Moby Dick*, *Sherlock Holmes*, *Dracula*, etc.).
-* **EPUB or PDF Download Options**: Each Gutenberg book features dedicated **[ EPUB ]** and **[ PDF ]** download buttons.
-* **Persistent Search State**: Tapping outside or closing the dialog preserves your active tab, search query, and search results in memory so you don't have to re-type or re-do your search!
-
-### 📗 Full EPUB eBook Support (`EpubParser`)
-* **Seamless EPUB Reading**: Unzips and converts `.epub` eBooks on demand into clean, typeset vector documents with large, clear **18pt typography**.
-* **100% Feature Parity**: All 20+ app features (Synced Reading `SR`, Auto Scroll `AS`, Vocabulary PDF Generation `LV`, Bookmarks `B`/`BL`, History `H`, Dark Mode `T`, ML Kit OCR `O`, and Google Web Search) work 100% identically for EPUB files!
-* **0ms Instant Opening**: Converted EPUB PDFs are stored persistently in `Downloads/PdfHelperReader_files/`. Re-opening any EPUB skips conversion and loads instantly in 0 milliseconds!
-* **Hidden Vocabulary Sidecars**: Vocabulary files are created with a leading dot (`.Book_vocab.pdf`) to keep them hidden from gallery/file managers.
-
-### 💾 Smart 500 MB Storage Manager
-* **Automatic Cache Management**: Monitors the size of `Downloads/PdfHelperReader_files/`. If total folder size exceeds **500 MB**, it automatically deletes oldest files step-by-step (Oldest Vocabulary files $\rightarrow$ Oldest Converted files $\rightarrow$ Oldest Downloaded files).
-* **Active File Protection**: Always protects and preserves the **latest active file** in each group from deletion!
+### ℹ️ Interactive App & Developer Info
+* **Clickable Repository Link**: Direct, interactive link to [`github.com/ohidsajol/PdfHelperReader ↗`](https://github.com/ohidsajol/PdfHelperReader) that opens directly in your default browser.
+* **Comprehensive Feature Breakdown**: View all reader capabilities, storage management rules, and developer credits in an elegant scrollable dialog.
 
 ---
 
-## 🛠️ Tech Stack & Dependencies
+## 🚀 Core Features
+
+### 📖 Synchronized Dual-Pane Reading
+* **Compare Documents Side-by-Side**: Read original texts alongside companion translations, notes, or vocabulary sidecars.
+* **Synced Reading Mode (`SR`)**: Lock scrolling between both panes with customizable page offsets.
+* **Independent Controls**: Switch modes, jump pages, or adjust font/zoom independently or in sync.
+
+### 🧘 Immersive Zen Mode
+* **Distraction-Free Reading**: Hide all top bars and side strips with a simple double-tap gesture.
+* **Cross-Pane Synchronization**: Double-tapping on either pane toggles chrome visibility across both panes simultaneously.
+* **Orientation State Preservation**: Hidden controls remain hidden when rotating between portrait and landscape.
+
+### 🔤 Vocabulary PDF Generator & 964k-Word Offline Dictionary
+* **Automated Sidecar Generation (`LV`)**: Extracts difficult words, sorts by frequency and CEFR proficiency levels, and creates a companion PDF sidecar with contextual definitions.
+* **Instant Offline Lookup**: 964,000+ English word entries for definitions, pronunciations, inflections, and grammatical categories without requiring internet.
+
+### 👁️ Local On-Device ML Kit OCR (`O` Button)
+* **Offline Text Recognition**: Powered by Google Play Services ML Kit to recognize text in scanned PDFs and document images.
+* **Force OCR Mode**: Re-scans documents with existing low-quality or corrupt text layers to produce clean, selectable text.
+
+### 📚 Project Gutenberg Search & Online Classics (`LOB` Button)
+* **70,000+ Gutenberg Books**: Real-time debounced title and author search with direct EPUB and PDF downloads.
+* **Curated Classics**: Instant access to hand-picked works by Dostoevsky, Nietzsche, Wordsworth, and Byron.
+* **Smart 500 MB Storage Manager**: Automatically trims older downloaded books and cached files while protecting your active reading material.
+
+### 🔄 3-Tier GitHub In-App Updates
+* **Zero Rate-Limit Update Checker**: Checks GitHub releases using a 3-tier fallback (API $\rightarrow$ Web Redirect $\rightarrow$ Atom Feed) to bypass `HTTP 403` restrictions.
+* **Direct Background Download**: Streams update APKs straight to `Downloads/` with live progress bars and clean installation prompts.
+
+---
+
+## 🛠️ Tech Stack & Architecture
 * **Language**: 100% Kotlin
 * **UI Framework**: Jetpack Compose & Material 3
-* **PDF Processing**: `com.tomroush:pdfbox-android` & `com.itextpdf:itextg`
-* **OCR**: Google Play Services ML Kit Text Recognition
-* **Data & State**: Gson, SharedPreferences, Coroutines & Flow
+* **PDF Engine**: Android `PdfRenderer`, `com.tomroush:pdfbox-android`, and `com.itextpdf:itextg`
+* **Text Recognition**: Google Play Services ML Kit Text Recognition
+* **Data & Persistence**: Kotlin Coroutines, StateFlow, SharedPreferences, and Gson
 
 ---
 
-## 📦 Downloading & Installing the App
-* Download pre-built APKs directly from the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page.
-* Or build the release APK via Gradle:
-    ```bash
-    ./gradlew assembleRelease
-    ```
-    The generated APK is saved at `app/build/outputs/apk/release/app-release.apk`.
+## 📦 Download & Installation
+Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
+* **[PdfHelperReader-v4.0.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.0.0/PdfHelperReader-v4.0.0.apk)**
+
+To build from source:
+```bash
+git clone https://github.com/ohidsajol/PdfHelperReader.git
+cd PdfHelperReader
+./gradlew assembleRelease
+```
+The compiled APK will be located at `app/build/outputs/apk/release/app-release.apk`.
 
 ---
 
 ## 📄 License
-This project is licensed under the [MIT License](LICENSE).
+This project is open-source software licensed under the [MIT License](LICENSE).
