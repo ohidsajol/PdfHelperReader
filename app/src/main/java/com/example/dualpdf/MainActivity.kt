@@ -925,7 +925,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadHighlights()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v12", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v13", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -933,7 +933,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v12", true) }
+                editPrefs { putBoolean("default_book_extracted_v13", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
