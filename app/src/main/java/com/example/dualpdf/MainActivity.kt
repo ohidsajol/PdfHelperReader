@@ -632,6 +632,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             vocab.isDraggingSelection = value
         }
 
+    var dictSummary by mutableStateOf<VocabGenerator.WordSummary?>(null)
+    var showDictPopup by mutableStateOf(true)
+
     var isBookEpub by mutableStateOf(false)
         private set
 
@@ -1532,6 +1535,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             isBookEpub = false
             activeSelection = null
             isDraggingSelection = false
+            dictSummary = null
         }
         d?.close()            // then wait for in-flight render and release
     }
@@ -1844,6 +1848,44 @@ fun ReaderScreen(reader: Reader) {
     var ocrDialogMessage by remember { mutableStateOf("") }
     var isZenMode by remember { mutableStateOf(false) }
     var showZenControls by rememberSaveable { mutableStateOf(true) }
+
+    val activeSel = reader.activeSelection
+    val activePane = if (reader.book.activeSelection != null) reader.book else reader.vocab
+
+    LaunchedEffect(activeSel) {
+        if (activeSel == null) {
+            reader.dictSummary = null
+            return@LaunchedEffect
+        }
+        val activeDoc = activePane.doc
+        if (activeDoc == null) {
+            reader.dictSummary = null
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            VocabGenerator.init(ctx)
+            val fullText = (activeSel.minPage..activeSel.maxPage).mapNotNull { p ->
+                val pWords = activeDoc.getWords(p) ?: activeDoc.getOrExtractWords(ctx, activePane.uri ?: reader.getBookUri(), p)
+                val pRange = activeSel.wordRangeForPage(p, pWords.size)
+                if (pRange != null && pWords.isNotEmpty()) {
+                    PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                } else null
+            }.joinToString(" ").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+
+            if (fullText.isNotBlank()) {
+                val summary = VocabGenerator.lookupSynonymsAndAntonyms(fullText)
+                withContext(Dispatchers.Main) {
+                    reader.dictSummary = summary
+                    reader.showDictPopup = true
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    reader.dictSummary = null
+                }
+            }
+        }
+    }
+
     val handleTripleTap = {
         if (isZenMode) {
             isZenMode = false
@@ -3472,6 +3514,29 @@ fun PdfPane(
                     }
                 }
             }
+
+            val shouldShowPopup = (label == "VOCAB") || (splitMode == SplitMode.ONLY_BOOK && label == "BOOK")
+            val dictSummary = reader.dictSummary
+            if (shouldShowPopup && dictSummary != null && reader.showDictPopup && !reader.isDraggingSelection) {
+                val hasSelectionInThisPane = pane.activeSelection != null
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(if (hasSelectionInThisPane || splitMode == SplitMode.ONLY_BOOK) Alignment.BottomCenter else Alignment.TopCenter)
+                        .padding(
+                            top = if (!hasSelectionInThisPane && splitMode != SplitMode.ONLY_BOOK) 10.dp else 0.dp,
+                            bottom = if (hasSelectionInThisPane || splitMode == SplitMode.ONLY_BOOK) 16.dp else 0.dp,
+                            start = 6.dp,
+                            end = 6.dp
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    WordSynonymAntonymPopup(
+                        summary = dictSummary,
+                        onDismiss = { reader.showDictPopup = false }
+                    )
+                }
+            }
         }
     }
 
@@ -4578,39 +4643,12 @@ fun PaneSelectionToolbar(
     val ctx = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
 
-    var dictSummary by remember(activeSel) { mutableStateOf<VocabGenerator.WordSummary?>(null) }
-    var showDictPopup by remember(activeSel) { mutableStateOf(true) }
-
-    LaunchedEffect(activeSel) {
-        withContext(Dispatchers.IO) {
-            VocabGenerator.init(ctx)
-            val fullText = (activeSel.minPage..activeSel.maxPage).mapNotNull { p ->
-                val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
-                val pRange = activeSel.wordRangeForPage(p, pWords.size)
-                if (pRange != null && pWords.isNotEmpty()) {
-                    PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
-                } else null
-            }.joinToString(" ").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
-
-            if (fullText.isNotBlank()) {
-                val summary = VocabGenerator.lookupSynonymsAndAntonyms(fullText)
-                withContext(Dispatchers.Main) {
-                    dictSummary = summary
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    dictSummary = null
-                }
-            }
-        }
-    }
-
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .offset { IntOffset(0, finalTopPx.roundToInt()) }
             .padding(horizontal = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentAlignment = Alignment.Center
     ) {
         SelectionFloatingToolbar(
             onHighlight = { colorHex ->
@@ -4723,15 +4761,6 @@ fun PaneSelectionToolbar(
                 pane.activeSelection = null
             }
         )
-
-        val currentSummary = dictSummary
-        if (currentSummary != null && showDictPopup) {
-            Spacer(Modifier.height(6.dp))
-            WordSynonymAntonymPopup(
-                summary = currentSummary,
-                onDismiss = { showDictPopup = false }
-            )
-        }
     }
 }
 
