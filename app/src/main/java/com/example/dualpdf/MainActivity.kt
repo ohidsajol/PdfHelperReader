@@ -925,7 +925,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadHighlights()
         loadHistory()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v14", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v15", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -933,7 +933,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v14", true) }
+                editPrefs { putBoolean("default_book_extracted_v15", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -1835,6 +1835,15 @@ fun ReaderScreen(reader: Reader) {
     var showForceOcrDialog by remember { mutableStateOf(false) }
     var ocrDialogMessage by remember { mutableStateOf("") }
     var isZenMode by remember { mutableStateOf(false) }
+    var showZenControls by rememberSaveable { mutableStateOf(true) }
+    val handleTripleTap = {
+        if (isZenMode) {
+            isZenMode = false
+        } else {
+            isZenMode = true
+            showZenControls = false
+        }
+    }
 
     val window = (ctx as? Activity)?.window
     LaunchedEffect(isZenMode) {
@@ -1979,7 +1988,10 @@ fun ReaderScreen(reader: Reader) {
                         splitMode = splitMode,
                         isLandscape = isLandscape,
                         isZenMode = true,
+                        showZenControls = showZenControls,
+                        onToggleZenControls = { showZenControls = !showZenControls },
                         onExitZen = { isZenMode = false },
+                        onTripleTap = handleTripleTap,
                         onToggleSplitMode = {
                             splitMode = when (splitMode) {
                                 SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
@@ -2812,7 +2824,10 @@ fun ReaderScreen(reader: Reader) {
                     )
 
                     RibbonBtn(
-                        onClick = { isZenMode = true },
+                        onClick = {
+                            isZenMode = true
+                            showZenControls = true
+                        },
                         text = "Z"
                     )
 
@@ -3028,6 +3043,10 @@ fun ReaderScreen(reader: Reader) {
                     splitMode = splitMode,
                     isLandscape = isLandscape,
                     isZenMode = false,
+                    showZenControls = showZenControls,
+                    onToggleZenControls = { showZenControls = !showZenControls },
+                    onExitZen = { isZenMode = false },
+                    onTripleTap = handleTripleTap,
                     onToggleSplitMode = {
                         splitMode = when (splitMode) {
                             SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
@@ -3140,7 +3159,10 @@ fun DocumentPanesLayout(
     splitMode: SplitMode,
     isLandscape: Boolean,
     isZenMode: Boolean = false,
+    showZenControls: Boolean = true,
+    onToggleZenControls: () -> Unit = {},
     onExitZen: () -> Unit = {},
+    onTripleTap: () -> Unit = {},
     onToggleSplitMode: () -> Unit = {},
     onSetSplitMode: (SplitMode) -> Unit = {},
     pickBook: androidx.activity.result.ActivityResultLauncher<Array<String>>,
@@ -3156,7 +3178,6 @@ fun DocumentPanesLayout(
     vocabListState: androidx.compose.foundation.lazy.LazyListState? = null
 ) {
     val ctx = LocalContext.current
-    var showZenControls by rememberSaveable { mutableStateOf(true) }
 
     val emptyBookCard: @Composable () -> Unit = {
         MessageCard(
@@ -3223,23 +3244,23 @@ fun DocumentPanesLayout(
         SplitMode.SPLIT_BOTH -> {
             if (isLandscape) {
                 Row(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
                     VerticalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
                 }
             } else {
                 Column(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
+                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
                     HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
                 }
             }
         }
         SplitMode.ONLY_BOOK -> {
-            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
+            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
         }
         SplitMode.ONLY_VOCAB -> {
-            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, { showZenControls = !showZenControls }, reader, splitMode, onExitZen, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
         }
     }
 }
@@ -3257,6 +3278,7 @@ fun PdfPane(
     reader: Reader,
     splitMode: SplitMode = SplitMode.SPLIT_BOTH,
     onExitZen: () -> Unit = {},
+    onTripleTap: () -> Unit = {},
     onToggleSplitMode: () -> Unit = {},
     onSetSplitMode: (SplitMode) -> Unit = {},
     empty: @Composable () -> Unit,
@@ -3280,17 +3302,12 @@ fun PdfPane(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .then(
-                    if (isZenMode) {
-                        Modifier.pointerInput(Unit) {
-                            detectTapGestures(
-                                onDoubleTap = {
-                                    onToggleZenControls()
-                                }
-                            )
-                        }
-                    } else Modifier
-                )
+                .pointerInput(isZenMode) {
+                    detectMultiTapGestures(
+                        onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
+                        onTripleTap = { onTripleTap() }
+                    )
+                }
         ) {
             if (isGoogleWebInVocab) {
                 GoogleWebView(
@@ -3309,7 +3326,8 @@ fun PdfPane(
                             isDarkMode = isDarkMode,
                             uri = pane.uri,
                             isZenMode = isZenMode,
-                            onToggleZenControls = onToggleZenControls
+                            onToggleZenControls = onToggleZenControls,
+                            onTripleTap = onTripleTap
                         )
                     } else if (pane.readingMode == ReadingMode.CONTINUOUS) {
                         ContinuousPageView(
@@ -3321,6 +3339,7 @@ fun PdfPane(
                             externalListState = externalListState,
                             isZenMode = isZenMode,
                             onToggleZenControls = onToggleZenControls,
+                            onTripleTap = onTripleTap,
                             onOpenGoogle = { onSetSplitMode(SplitMode.SPLIT_BOTH) }
                         )
                     } else {
@@ -3333,6 +3352,7 @@ fun PdfPane(
                             reader = reader,
                             isZenMode = isZenMode,
                             onToggleZenControls = onToggleZenControls,
+                            onTripleTap = onTripleTap,
                             onOpenGoogle = { onSetSplitMode(SplitMode.SPLIT_BOTH) }
                         )
                     }
@@ -3647,33 +3667,22 @@ fun PageView(
     reader: Reader,
     isZenMode: Boolean = false,
     onToggleZenControls: () -> Unit = {},
+    onTripleTap: () -> Unit = {},
     onOpenGoogle: (() -> Unit)? = null
 ) {
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .then(
-                if (isZenMode) {
-                    Modifier.pointerInput(Unit) {
-                        detectTapGestures(
-                            onDoubleTap = { onToggleZenControls() },
-                            onTap = {
-                                pane.activeSelection = null
-                                pane.activeHighlightMenu = null
-                            }
-                        )
+            .pointerInput(isZenMode, pane) {
+                detectMultiTapGestures(
+                    onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
+                    onTripleTap = { onTripleTap() },
+                    onTap = {
+                        pane.activeSelection = null
+                        pane.activeHighlightMenu = null
                     }
-                } else {
-                    Modifier.pointerInput(pane) {
-                        detectTapGestures(
-                            onTap = {
-                                pane.activeSelection = null
-                                pane.activeHighlightMenu = null
-                            }
-                        )
-                    }
-                }
-            )
+                )
+            }
     ) {
         val density = LocalDensity.current
         val widthPx = with(density) { maxWidth.roundToPx() }
@@ -3761,6 +3770,7 @@ fun PageView(
                 reader = reader,
                 isZenMode = isZenMode,
                 onToggleZenControls = onToggleZenControls,
+                onTripleTap = onTripleTap,
                 onDoubleTapPage = { offset ->
                     val totalCount = doc.pageCount
                     val halfWidth: Float = with(density) { displayedW.toPx() } / 2.0f
@@ -4009,7 +4019,7 @@ suspend fun checkAppUpdateInfo(ctx: Context, currentVersion: String = getCurrent
     if (conn.responseCode in 200..399) {
         val jsonStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         val root = Gson().fromJson(jsonStr, com.google.gson.JsonObject::class.java)
-        val latestTag = root.get("tag_name")?.asString ?: "v4.0.0"
+        val latestTag = root.get("tag_name")?.asString ?: "v4.0.1"
         val releaseTitle = root.get("name")?.asString ?: "PdfHelperReader Update"
         val releaseNotes = root.get("body")?.asString ?: ""
 
@@ -4050,7 +4060,7 @@ suspend fun downloadAppUpdateApk(
             if (!downloadsDir.exists()) downloadsDir.mkdirs()
 
             val fileName = downloadUrl.substringAfterLast("/").takeIf { it.endsWith(".apk") }
-                ?: "PdfHelperReader-v4.0.0.apk"
+                ?: "PdfHelperReader-v4.0.1.apk"
             val updateApkFile = File(downloadsDir, fileName)
             if (updateApkFile.exists()) {
                 runCatching { updateApkFile.delete() }
@@ -4483,7 +4493,8 @@ fun TextView(
     isDarkMode: Boolean,
     uri: Uri?,
     isZenMode: Boolean = false,
-    onToggleZenControls: () -> Unit = {}
+    onToggleZenControls: () -> Unit = {},
+    onTripleTap: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
     var textContent by remember(doc, page, uri) { mutableStateOf("Loading text...") }
@@ -4501,15 +4512,12 @@ fun TextView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .then(
-                    if (isZenMode) {
-                        Modifier.pointerInput(Unit) {
-                            detectTapGestures(
-                                onDoubleTap = { onToggleZenControls() }
-                            )
-                        }
-                    } else Modifier
-                )
+                .pointerInput(isZenMode) {
+                    detectMultiTapGestures(
+                        onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
+                        onTripleTap = { onTripleTap() }
+                    )
+                }
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             contentAlignment = Alignment.TopStart
@@ -4722,6 +4730,7 @@ fun ContinuousPageView(
     externalListState: androidx.compose.foundation.lazy.LazyListState? = null,
     isZenMode: Boolean = false,
     onToggleZenControls: () -> Unit = {},
+    onTripleTap: () -> Unit = {},
     onOpenGoogle: (() -> Unit)? = null
 ) {
     val listState = externalListState ?: rememberLazyListState(initialFirstVisibleItemIndex = pane.page)
@@ -4766,28 +4775,16 @@ fun ContinuousPageView(
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .then(
-                if (isZenMode) {
-                    Modifier.pointerInput(Unit) {
-                        detectTapGestures(
-                            onDoubleTap = { onToggleZenControls() },
-                            onTap = {
-                                pane.activeSelection = null
-                                pane.activeHighlightMenu = null
-                            }
-                        )
+            .pointerInput(isZenMode, pane) {
+                detectMultiTapGestures(
+                    onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
+                    onTripleTap = { onTripleTap() },
+                    onTap = {
+                        pane.activeSelection = null
+                        pane.activeHighlightMenu = null
                     }
-                } else {
-                    Modifier.pointerInput(pane) {
-                        detectTapGestures(
-                            onTap = {
-                                pane.activeSelection = null
-                                pane.activeHighlightMenu = null
-                            }
-                        )
-                    }
-                }
-            )
+                )
+            }
     ) {
         val density = LocalDensity.current
         val widthPx = with(density) { maxWidth.roundToPx() }
@@ -4853,6 +4850,7 @@ fun ContinuousPageView(
                         reader = reader,
                         isZenMode = isZenMode,
                         onToggleZenControls = onToggleZenControls,
+                        onTripleTap = onTripleTap,
                         onRequestScroll = onRequestScroll
                     )
                     Spacer(
@@ -4898,6 +4896,7 @@ fun ContinuousPageItem(
     reader: Reader,
     isZenMode: Boolean = false,
     onToggleZenControls: () -> Unit = {},
+    onTripleTap: () -> Unit = {},
     onRequestScroll: ((Float) -> Unit)? = null
 ) {
     val ratio = doc.getPageRatio(index) ?: 0.707f // Default A4 ratio (1 / sqrt(2))
@@ -4947,6 +4946,7 @@ fun ContinuousPageItem(
             reader = reader,
             isZenMode = isZenMode,
             onToggleZenControls = onToggleZenControls,
+            onTripleTap = onTripleTap,
             onRequestScroll = onRequestScroll
         )
         if (image == null) {

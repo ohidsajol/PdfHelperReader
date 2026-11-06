@@ -1,4 +1,4 @@
-# PdfHelperReader (v4.0.0)
+# PdfHelperReader (v4.0.1)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -6,6 +6,16 @@
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
 **PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
+
+---
+
+## 🌟 What's New in v4.0.1
+
+### 🧘 Zen Mode Triple-Tap Gesture Shortcuts
+* **Instant Distraction-Free Toggle**: Triple-tap anywhere on the reading pane in Normal mode to enter Zen Mode with the sidebar buttons hidden for a 100% clean view.
+* **Direct Return**: Triple-tap anywhere in Zen mode to return directly to Normal mode without showing or flashing the sidebar buttons.
+* **Responsive Double-Tap**: Double-tapping in Zen mode toggles the right-edge sidebar buttons with an optimized 200ms window and zero sluggishness.
+* **Enlarged Tutorial Manual (2x Font)**: Completely refreshed `PdfHelperReader_Tutorial.pdf` manual with 2x larger typography (16pt body) and full v4.0.1 gesture documentation.
 
 ---
 
@@ -69,7 +79,7 @@
 
 ## 📦 Download & Installation
 Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
-* **[PdfHelperReader-v4.0.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.0.0/PdfHelperReader-v4.0.0.apk)**
+* **[PdfHelperReader-v4.0.1.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.0.1/PdfHelperReader-v4.0.1.apk)**
 
 To build from source:
 ```bash

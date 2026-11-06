@@ -99,6 +99,7 @@ fun InteractivePdfPage(
     reader: Reader,
     isZenMode: Boolean = false,
     onToggleZenControls: () -> Unit = {},
+    onTripleTap: () -> Unit = {},
     onDoubleTapPage: ((Offset) -> Unit)? = null,
     onRequestScroll: ((Float) -> Unit)? = null
 ) {
@@ -199,7 +200,7 @@ fun InteractivePdfPage(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(currentWordsList, pageHighlights, isZenMode) {
-                    detectTapGestures(
+                    detectMultiTapGestures(
                         onTap = { tapOffset ->
                             if (!pane.isDraggingSelection) {
                                 focusManager.clearFocus()
@@ -222,6 +223,9 @@ fun InteractivePdfPage(
                             } else if (onDoubleTapPage != null) {
                                 onDoubleTapPage(offset)
                             }
+                        },
+                        onTripleTap = {
+                            onTripleTap()
                         },
                         onLongPress = { pressOffset ->
                             val xNorm = (pressOffset.x / size.width).coerceIn(0f, 1f)
