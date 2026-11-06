@@ -268,9 +268,15 @@ object VocabGenerator {
         return null
     }
 
+    data class DefinitionItem(
+        val type: String,
+        val def: String
+    )
+
     data class WordSummary(
         val word: String,
         val score: Float?,
+        val definitions: List<DefinitionItem>,
         val synonyms: List<String>,
         val antonyms: List<String>
     )
@@ -291,14 +297,19 @@ object VocabGenerator {
         if (match == null) return null
         val matchedWord = match.first
         val entry = match.second
+        val defs = entry.pos.mapNotNull { pos ->
+            val d = pos.def.trim()
+            if (d.isNotBlank()) DefinitionItem(pos.type.trim(), d) else null
+        }
         val syns = entry.pos.flatMap { it.syn }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
         val ants = entry.pos.flatMap { it.ant }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
-        if (syns.isEmpty() && ants.isEmpty()) return null
+        if (defs.isEmpty() && syns.isEmpty() && ants.isEmpty()) return null
 
         return WordSummary(
             word = matchedWord,
             score = entry.score,
+            definitions = defs,
             synonyms = syns,
             antonyms = ants
         )

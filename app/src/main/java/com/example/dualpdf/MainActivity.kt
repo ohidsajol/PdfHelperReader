@@ -4836,14 +4836,47 @@ fun WordSynonymAntonymPopup(
 
             Spacer(Modifier.height(5.dp))
 
-            // Scrollable list of Synonyms & Antonyms (max 140dp)
+            // Scrollable list of Definitions, Synonyms & Antonyms (max 180dp)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 140.dp)
+                    .heightIn(max = 180.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
+                // Definitions
+                if (summary.definitions.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        summary.definitions.forEach { defItem ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                if (defItem.type.isNotBlank()) {
+                                    Text(
+                                        text = "• ${defItem.type.lowercase()}: ",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Text(
+                                        text = "• ",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Text(
+                                    text = defItem.def,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (summary.synonyms.isNotEmpty()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

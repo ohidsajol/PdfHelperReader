@@ -218,6 +218,9 @@ class VocabGeneratorTest {
         assertNotNull(sarongSummary)
         assertEquals("sarong", sarongSummary!!.word)
         assertEquals(28.38f, sarongSummary.score)
+        assertTrue(sarongSummary.definitions.isNotEmpty())
+        assertEquals("noun", sarongSummary.definitions[0].type)
+        assertTrue(sarongSummary.definitions[0].def.contains("garment"))
         assertTrue(sarongSummary.synonyms.contains("wrap"))
         assertTrue(sarongSummary.antonyms.contains("shirt"))
 
