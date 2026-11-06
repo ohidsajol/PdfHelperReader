@@ -59,6 +59,7 @@ class VocabGeneratorTest {
                 reader.endObject()
             }
             dictionary = map
+            VocabGenerator.initWithMapForTesting(map)
             assertNotNull(dictionary)
             assertTrue(dictionary.isNotEmpty())
         }
@@ -209,6 +210,54 @@ class VocabGeneratorTest {
         assertEquals(1, entry!!.pos.size)
         assertEquals("adjective", entry.pos[0].type)
         assertEquals(1.0f, entry.score)
+    }
+
+    @Test
+    fun testLookupSynonymsAndAntonyms() {
+        val sarongSummary = VocabGenerator.lookupSynonymsAndAntonyms("sarong")
+        assertNotNull(sarongSummary)
+        assertEquals("sarong", sarongSummary!!.word)
+        assertEquals(28.38f, sarongSummary.score)
+        assertTrue(sarongSummary.synonyms.contains("wrap"))
+        assertTrue(sarongSummary.antonyms.contains("shirt"))
+
+        val punctSummary = VocabGenerator.lookupSynonymsAndAntonyms("\"'sarong,'\"")
+        assertNotNull(punctSummary)
+        assertEquals("sarong", punctSummary!!.word)
+
+        val pluralSummary = VocabGenerator.lookupSynonymsAndAntonyms("sarongs")
+        assertNotNull(pluralSummary)
+        assertTrue(pluralSummary!!.synonyms.contains("wrap"))
+        assertTrue(pluralSummary.antonyms.contains("shirt"))
+
+        val anophelesSummary = VocabGenerator.lookupSynonymsAndAntonyms("anopheles")
+        assertNotNull(anophelesSummary)
+        assertTrue(anophelesSummary!!.synonyms.isNotEmpty())
+        assertTrue(anophelesSummary.antonyms.isEmpty())
+
+        val nullSummary = VocabGenerator.lookupSynonymsAndAntonyms("xyznonexistentword123")
+        org.junit.Assert.assertNull(nullSummary)
+    }
+
+    @Test
+    fun testThresholdFilteringLogic() {
+        val sarongEntry = VocabGenerator.lookupWithLemmatization("sarong")
+        assertNotNull(sarongEntry)
+        val score = sarongEntry!!.score ?: 0f
+        assertEquals(28.38f, score)
+
+        val threshold = 37f
+        assertTrue("Sarong score (28.38) should be <= threshold 37", score <= threshold)
+
+        val lowThreshold = 20f
+        assertTrue("Sarong score (28.38) should NOT be <= threshold 20", score > lowThreshold)
+
+        val ephemeralEntry = VocabGenerator.lookupWithLemmatization("ephemeral")
+        assertNotNull(ephemeralEntry)
+        val ephScore = ephemeralEntry!!.score ?: 0f
+        assertEquals(37.38f, ephScore)
+        assertTrue("Ephemeral (37.38) should NOT be included when threshold is 37", ephScore > 37f)
+        assertTrue("Ephemeral (37.38) should be included when threshold is 38", ephScore <= 38f)
     }
 
     @Test

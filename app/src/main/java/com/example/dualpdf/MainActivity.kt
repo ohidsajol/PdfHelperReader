@@ -60,6 +60,9 @@ import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.ui.unit.IntOffset
@@ -1083,6 +1086,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     fun generateVocab(
         pageRange: IntRange? = null,
+        maxScoreThreshold: Float = 100f,
         onProgress: (Int, Int) -> Unit,
         onDone: (VocabResult) -> Unit,
         onError: (Exception) -> Unit
@@ -1108,7 +1112,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
                 val outputPdf = File(ctx.cacheDir, "vocab_output_${System.currentTimeMillis()}.pdf")
 
-                val result = VocabGenerator.generate(ctx, inputPdf, outputPdf, pageRange) { current, total ->
+                val result = VocabGenerator.generate(ctx, inputPdf, outputPdf, pageRange, maxScoreThreshold) { current, total ->
                     if (coroutineContext.isActive) {
                         scope.launch(Dispatchers.Main) {
                             onProgress(current, total)
@@ -1551,6 +1555,9 @@ class MainActivity : ComponentActivity() {
         reader = Reader(applicationContext, scope)
         reader.restore()
         checkPermissions()
+        scope.launch(Dispatchers.IO) {
+            VocabGenerator.init(applicationContext)
+        }
         setContent { AppTheme { ReaderScreen(reader) } }
     }
 
@@ -1791,6 +1798,7 @@ fun ReaderScreen(reader: Reader) {
     var generatedFile by remember { mutableStateOf<File?>(null) }
     var genProgressCurrent by remember { mutableIntStateOf(0) }
     var genProgressTotal by remember { mutableIntStateOf(0) }
+    var showVocabThresholdDialog by remember { mutableStateOf(false) }
     
     var isOcrGenerating by remember { mutableStateOf(false) }
     var ocrProgressCurrent by remember { mutableIntStateOf(0) }
@@ -1919,63 +1927,65 @@ fun ReaderScreen(reader: Reader) {
         }
     }
 
-    val generateVocabAction: () -> Unit = {
+    val executeGenerateVocab: (Float) -> Unit = { threshold ->
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val vocabDir = File(downloadsDir, "PdfHelperReader_files")
         val expectedName = reader.expectedVocab ?: "vocab.pdf"
-        val existingFile = File(vocabDir, expectedName)
+        val currentBookPage = reader.book.page + 1
 
-        if (existingFile.exists()) {
-            Toast.makeText(ctx, "Vocab file already exists! Opening...", Toast.LENGTH_SHORT).show()
-            reader.onVocabPicked(Uri.fromFile(existingFile))
-        } else {
-            val currentBookPage = reader.book.page + 1
+        isGenerating = true
+        genProgressCurrent = 0
+        genProgressTotal = 0
 
-            isGenerating = true
-            genProgressCurrent = 0
-            genProgressTotal = 0
+        Toast.makeText(ctx, "Generating Vocabulary PDF (score ≤ ${threshold.toInt()})...", Toast.LENGTH_SHORT).show()
 
-            Toast.makeText(ctx, "Generating Vocabulary PDF...", Toast.LENGTH_SHORT).show()
+        reader.generateVocab(
+            pageRange = null,
+            maxScoreThreshold = threshold,
+            onProgress = { c, t -> 
+                genProgressCurrent = c
+                genProgressTotal = t
+            },
+            onDone = { fullResult ->
+                try {
+                    if (!vocabDir.exists()) vocabDir.mkdirs()
+                    val destFile = File(vocabDir, expectedName)
+                    if (destFile.exists()) destFile.delete()
+                    fullResult.outputPdf.copyTo(destFile, overwrite = true)
+                    fullResult.outputPdf.delete()
 
-            reader.generateVocab(
-                pageRange = null,
-                onProgress = { c, t -> 
-                    genProgressCurrent = c
-                    genProgressTotal = t
-                },
-                onDone = { fullResult ->
-                    try {
-                        if (!vocabDir.exists()) vocabDir.mkdirs()
-                        val destFile = File(vocabDir, expectedName)
-                        if (destFile.exists()) destFile.delete()
-                        fullResult.outputPdf.copyTo(destFile, overwrite = true)
-                        fullResult.outputPdf.delete()
+                    android.media.MediaScannerConnection.scanFile(
+                        ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                    )
 
-                        android.media.MediaScannerConnection.scanFile(
-                            ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
-                        )
+                    reader.saveVocabPageMap(fullResult.pageMap)
 
-                        reader.saveVocabPageMap(fullResult.pageMap)
-
-                        val mappedPage = fullResult.pageMap[currentBookPage]
-                        val targetPage = if (mappedPage != null) {
-                            (mappedPage - 1).coerceAtLeast(0)
-                        } else {
-                            0
-                        }
-
-                        reader.onVocabPicked(Uri.fromFile(destFile), targetPage = targetPage)
-                        Toast.makeText(ctx, "Vocab document loaded!", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
+                    val mappedPage = fullResult.pageMap[currentBookPage]
+                    val targetPage = if (mappedPage != null) {
+                        (mappedPage - 1).coerceAtLeast(0)
+                    } else {
+                        0
                     }
-                    isGenerating = false
-                },
-                onError = {
-                    isGenerating = false
-                    Toast.makeText(ctx, "Generation error: ${it.message}", Toast.LENGTH_LONG).show()
+
+                    reader.onVocabPicked(Uri.fromFile(destFile), targetPage = targetPage)
+                    Toast.makeText(ctx, "Vocab document loaded!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "Failed to save: ${e.message}", Toast.LENGTH_LONG).show()
                 }
-            )
+                isGenerating = false
+            },
+            onError = {
+                isGenerating = false
+                Toast.makeText(ctx, "Generation error: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        )
+    }
+
+    val generateVocabAction: () -> Unit = {
+        if (reader.book.doc == null) {
+            Toast.makeText(ctx, "Please open a book first", Toast.LENGTH_SHORT).show()
+        } else {
+            showVocabThresholdDialog = true
         }
     }
 
@@ -2702,6 +2712,31 @@ fun ReaderScreen(reader: Reader) {
         }
 
         Box(Modifier.fillMaxSize()) {
+            if (showVocabThresholdDialog) {
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val vocabDir = File(downloadsDir, "PdfHelperReader_files")
+                val expectedName = reader.expectedVocab ?: "vocab.pdf"
+                val existingFile = File(vocabDir, expectedName)
+                val prefs = remember { ctx.getSharedPreferences("dual_pdf_reader", Context.MODE_PRIVATE) }
+                val savedThreshold = prefs.getFloat("last_vocab_threshold", 37f)
+
+                VocabThresholdDialog(
+                    initialThreshold = savedThreshold,
+                    existingFileExists = existingFile.exists(),
+                    onDismiss = { showVocabThresholdDialog = false },
+                    onGenerate = { selectedThreshold ->
+                        showVocabThresholdDialog = false
+                        prefs.edit().putFloat("last_vocab_threshold", selectedThreshold).apply()
+                        executeGenerateVocab(selectedThreshold)
+                    },
+                    onOpenExisting = {
+                        showVocabThresholdDialog = false
+                        Toast.makeText(ctx, "Opening existing vocab file...", Toast.LENGTH_SHORT).show()
+                        reader.onVocabPicked(Uri.fromFile(existingFile))
+                    }
+                )
+            }
+
             if (showOcrConfirmDialog && !reader.isBookEpub && !reader.isCurrentBookEpub()) {
                 AlertDialog(
                     onDismissRequest = { showOcrConfirmDialog = false },
@@ -4543,12 +4578,39 @@ fun PaneSelectionToolbar(
     val ctx = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
 
-    Box(
+    var dictSummary by remember(activeSel) { mutableStateOf<VocabGenerator.WordSummary?>(null) }
+    var showDictPopup by remember(activeSel) { mutableStateOf(true) }
+
+    LaunchedEffect(activeSel) {
+        withContext(Dispatchers.IO) {
+            VocabGenerator.init(ctx)
+            val fullText = (activeSel.minPage..activeSel.maxPage).mapNotNull { p ->
+                val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                val pRange = activeSel.wordRangeForPage(p, pWords.size)
+                if (pRange != null && pWords.isNotEmpty()) {
+                    PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                } else null
+            }.joinToString(" ").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+
+            if (fullText.isNotBlank()) {
+                val summary = VocabGenerator.lookupSynonymsAndAntonyms(fullText)
+                withContext(Dispatchers.Main) {
+                    dictSummary = summary
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    dictSummary = null
+                }
+            }
+        }
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .offset { IntOffset(0, finalTopPx.roundToInt()) }
             .padding(horizontal = 6.dp),
-        contentAlignment = Alignment.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         SelectionFloatingToolbar(
             onHighlight = { colorHex ->
@@ -4661,7 +4723,290 @@ fun PaneSelectionToolbar(
                 pane.activeSelection = null
             }
         )
+
+        val currentSummary = dictSummary
+        if (currentSummary != null && showDictPopup) {
+            Spacer(Modifier.height(6.dp))
+            WordSynonymAntonymPopup(
+                summary = currentSummary,
+                onDismiss = { showDictPopup = false }
+            )
+        }
     }
+}
+
+@Composable
+fun WordSynonymAntonymPopup(
+    summary: VocabGenerator.WordSummary,
+    onDismiss: () -> Unit
+) {
+    Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 410.dp)
+            .padding(horizontal = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 14.dp, vertical = 9.dp)
+        ) {
+            // Header Row: Word, Score badge, and Dismiss '✕' button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = summary.word,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (summary.score != null) {
+                        val scoreText = if (summary.score % 1.0f == 0.0f) summary.score.toInt().toString() else summary.score.toString()
+                        Surface(
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.padding(0.dp)
+                        ) {
+                            Text(
+                                text = "score $scoreText",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "✕",
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(5.dp))
+
+            // Scrollable list of Synonyms & Antonyms (max 140dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 140.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (summary.synonyms.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "Synonyms: ",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color(0xFF1E88E5)
+                        )
+                        Text(
+                            text = summary.synonyms.joinToString(", "),
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (summary.antonyms.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "Antonyms: ",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color(0xFFE53935)
+                        )
+                        Text(
+                            text = summary.antonyms.joinToString(", "),
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VocabThresholdDialog(
+    initialThreshold: Float,
+    existingFileExists: Boolean,
+    onDismiss: () -> Unit,
+    onGenerate: (Float) -> Unit,
+    onOpenExisting: (() -> Unit)? = null
+) {
+    var threshold by remember { mutableFloatStateOf(initialThreshold.coerceIn(0f, 100f)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Generate Vocabulary PDF", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Select maximum wordfreq score threshold (0 - 100). Words with score ≤ threshold will be included in the vocabulary document.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Prominent Score Display Card
+                Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Score Threshold",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                text = "${threshold.roundToInt()}",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+
+                        val category = when {
+                            threshold <= 25f -> "Rare / Archaic"
+                            threshold <= 40f -> "Advanced / Literary"
+                            threshold <= 60f -> "Intermediate"
+                            else -> "Comprehensive"
+                        }
+                        Surface(
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                        ) {
+                            Text(
+                                text = category,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+
+                // Slider with - and + step buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilledTonalIconButton(
+                        onClick = { threshold = (threshold - 1f).coerceIn(0f, 100f) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Text("−", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Slider(
+                        value = threshold,
+                        onValueChange = { threshold = it.roundToInt().toFloat() },
+                        valueRange = 0f..100f,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    FilledTonalIconButton(
+                        onClick = { threshold = (threshold + 1f).coerceIn(0f, 100f) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Quick Preset Chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf(
+                        "Rare: 25" to 25f,
+                        "Literary: 37" to 37f,
+                        "Mid: 50" to 50f,
+                        "All: 100" to 100f
+                    ).forEach { (label, value) ->
+                        FilterChip(
+                            selected = threshold.roundToInt() == value.roundToInt(),
+                            onClick = { threshold = value },
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp)) }
+                        )
+                    }
+                }
+
+                if (existingFileExists) {
+                    Text(
+                        text = "An existing vocab file exists and will be regenerated.",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onGenerate(threshold) }) {
+                Text("Generate")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (existingFileExists && onOpenExisting != null) {
+                    OutlinedButton(onClick = onOpenExisting) {
+                        Text("Open Existing")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+            }
+        }
+    )
 }
 
 @Composable

@@ -21,6 +21,8 @@ import com.itextpdf.text.pdf.PdfReader
 import com.itextpdf.text.pdf.parser.PdfTextExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStreamReader
@@ -50,41 +52,50 @@ object VocabGenerator {
     private var dictionary = mapOf<String, String>()
     private val gson = Gson()
     private var initialized = false
+    private val initMutex = Mutex()
 
     suspend fun init(ctx: Context) = withContext(Dispatchers.IO) {
         if (initialized) return@withContext
+        initMutex.withLock {
+            if (initialized) return@withContext
 
-        // Load common words (acting as Zipf approximation)
-        ctx.assets.open("google-10000-english-no-swears.txt").bufferedReader().use { reader ->
-            val set = mutableSetOf<String>()
-            reader.forEachLine {
-                val w = it.trim().lowercase()
-                if (w.isNotEmpty()) set.add(w)
-            }
-            commonWords = set
-        }
-
-        // Stream and load fine-tuned master JSON dictionary efficiently
-        val map = HashMap<String, String>(1000000)
-        ctx.assets.open("dictionary_master.json").use { input ->
-            InputStreamReader(input, "UTF-8").use { isr ->
-                val reader = JsonReader(isr)
-                reader.beginObject()
-                while (reader.hasNext()) {
-                    val key = reader.nextName().lowercase()
-                    val token = reader.peek()
-                    if (token == JsonToken.BEGIN_OBJECT) {
-                        val element = JsonParser.parseReader(reader)
-                        map[key] = element.toString()
-                    } else if (token == JsonToken.STRING) {
-                        map[key] = reader.nextString()
-                    } else {
-                        reader.skipValue()
-                    }
+            // Load common words (acting as Zipf approximation)
+            ctx.assets.open("google-10000-english-no-swears.txt").bufferedReader().use { reader ->
+                val set = mutableSetOf<String>()
+                reader.forEachLine {
+                    val w = it.trim().lowercase()
+                    if (w.isNotEmpty()) set.add(w)
                 }
-                reader.endObject()
+                commonWords = set
             }
+
+            // Stream and load fine-tuned master JSON dictionary efficiently
+            val map = HashMap<String, String>(1000000)
+            ctx.assets.open("dictionary_master.json").use { input ->
+                InputStreamReader(input, "UTF-8").use { isr ->
+                    val reader = JsonReader(isr)
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        val key = reader.nextName().lowercase()
+                        val token = reader.peek()
+                        if (token == JsonToken.BEGIN_OBJECT) {
+                            val element = JsonParser.parseReader(reader)
+                            map[key] = element.toString()
+                        } else if (token == JsonToken.STRING) {
+                            map[key] = reader.nextString()
+                        } else {
+                            reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                }
+            }
+            dictionary = map
+            initialized = true
         }
+    }
+
+    fun initWithMapForTesting(map: Map<String, String>) {
         dictionary = map
         initialized = true
     }
@@ -209,9 +220,13 @@ object VocabGenerator {
     }
 
     fun lookupWithLemmatization(word: String): WordEntry? {
+        return lookupWithLemmatizationResult(word)?.second
+    }
+
+    fun lookupWithLemmatizationResult(word: String): Pair<String, WordEntry>? {
         val wLower = word.lowercase().trim()
         var entry = lookupEntry(wLower)
-        if (entry != null) return entry
+        if (entry != null) return wLower to entry
 
         val candidates = mutableListOf<String>()
 
@@ -247,10 +262,46 @@ object VocabGenerator {
 
         for (cand in candidates) {
             entry = lookupEntry(cand)
-            if (entry != null) return entry
+            if (entry != null) return cand to entry
         }
 
         return null
+    }
+
+    data class WordSummary(
+        val word: String,
+        val score: Float?,
+        val synonyms: List<String>,
+        val antonyms: List<String>
+    )
+
+    fun lookupSynonymsAndAntonyms(query: String): WordSummary? {
+        val clean = query.trim().trim { !it.isLetterOrDigit() && it != '-' }
+        if (clean.isBlank()) return null
+
+        var match = lookupWithLemmatizationResult(clean)
+
+        if (match == null && clean.contains(' ')) {
+            val first = clean.split(Regex("\\s+")).firstOrNull()?.trim { !it.isLetterOrDigit() && it != '-' } ?: ""
+            if (first.length >= 2) {
+                match = lookupWithLemmatizationResult(first)
+            }
+        }
+
+        if (match == null) return null
+        val matchedWord = match.first
+        val entry = match.second
+        val syns = entry.pos.flatMap { it.syn }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        val ants = entry.pos.flatMap { it.ant }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+        if (syns.isEmpty() && ants.isEmpty()) return null
+
+        return WordSummary(
+            word = matchedWord,
+            score = entry.score,
+            synonyms = syns,
+            antonyms = ants
+        )
     }
 
     private fun formatScore(score: Float): String {
@@ -331,11 +382,12 @@ object VocabGenerator {
         inputPdf: File,
         outputPdf: File,
         pageRange: IntRange? = null,
+        maxScoreThreshold: Float = 100f,
         onProgress: suspend (current: Int, total: Int) -> Unit
     ): VocabResult = withContext(Dispatchers.IO) {
         init(ctx)
 
-        val wordsRegex = Regex("\\b[a-zA-Z]{4,}\\b")
+        val wordsRegex = Regex("\\b[a-zA-Z]{3,}\\b")
 
         var reader: PdfReader? = null
         val androidDoc = PdfDocument()
@@ -396,12 +448,14 @@ object VocabGenerator {
 
                 for (word in tokens) {
                     if (seen.contains(word)) continue
-                    if (commonWords.contains(word)) continue
 
                     val entry = lookupWithLemmatization(word)
                     if (entry != null && entry.pos.isNotEmpty()) {
-                        seen.add(word)
-                        validWords.add(word to entry)
+                        val score = entry.score ?: 0f
+                        if (score <= maxScoreThreshold) {
+                            seen.add(word)
+                            validWords.add(word to entry)
+                        }
                     }
                 }
 
