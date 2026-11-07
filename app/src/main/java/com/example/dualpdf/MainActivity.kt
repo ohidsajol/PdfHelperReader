@@ -594,6 +594,8 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     fun searchGoogle(query: String) {
         vocabMode = VocabMode.GOOGLE_WEB
+        showDictPopup = false
+        dictSummary = null
         val clean = query.filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
         googleRawQuery = clean
         googleSearchToken++
@@ -1561,6 +1563,12 @@ class MainActivity : ComponentActivity() {
         checkPermissions()
         scope.launch(Dispatchers.IO) {
             VocabGenerator.init(applicationContext)
+        }
+        scope.launch(Dispatchers.Main) {
+            kotlinx.coroutines.delay(1200)
+            try {
+                android.webkit.WebView(applicationContext).destroy()
+            } catch (_: Exception) {}
         }
         setContent { AppTheme { ReaderScreen(reader) } }
     }
@@ -3325,27 +3333,97 @@ fun DocumentPanesLayout(
         }
     }
 
-    when (splitMode) {
-        SplitMode.SPLIT_BOTH -> {
-            if (isLandscape) {
-                Row(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxHeight(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
-                    VerticalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxHeight(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
-                }
-            } else {
-                Column(modifier) {
-                    PdfPane("BOOK", reader.book, Modifier.weight(1f).fillMaxWidth(), reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
-                    HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
-                    PdfPane("VOCAB", reader.vocab, Modifier.weight(1f).fillMaxWidth(), reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
-                }
+    if (isLandscape) {
+        Row(modifier) {
+            if (splitMode != SplitMode.ONLY_VOCAB) {
+                PdfPane(
+                    "BOOK",
+                    reader.book,
+                    if (splitMode == SplitMode.SPLIT_BOTH) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxSize(),
+                    reader::setBookPage,
+                    reader.isDarkMode,
+                    isZenMode,
+                    showZenControls,
+                    onToggleZenControls,
+                    reader,
+                    splitMode,
+                    onExitZen,
+                    onTripleTap,
+                    onToggleSplitMode,
+                    onSetSplitMode,
+                    emptyBookCard,
+                    externalListState = bookListState
+                )
+            }
+            if (splitMode == SplitMode.SPLIT_BOTH) {
+                VerticalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
+            }
+            if (splitMode != SplitMode.ONLY_BOOK) {
+                PdfPane(
+                    "VOCAB",
+                    reader.vocab,
+                    if (splitMode == SplitMode.SPLIT_BOTH) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxSize(),
+                    reader::setVocabPage,
+                    reader.isDarkMode,
+                    isZenMode,
+                    showZenControls,
+                    onToggleZenControls,
+                    reader,
+                    splitMode,
+                    onExitZen,
+                    onTripleTap,
+                    onToggleSplitMode,
+                    onSetSplitMode,
+                    emptyVocabCard,
+                    externalListState = vocabListState
+                )
             }
         }
-        SplitMode.ONLY_BOOK -> {
-            PdfPane("BOOK", reader.book, modifier, reader::setBookPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyBookCard, externalListState = bookListState)
-        }
-        SplitMode.ONLY_VOCAB -> {
-            PdfPane("VOCAB", reader.vocab, modifier, reader::setVocabPage, reader.isDarkMode, isZenMode, showZenControls, onToggleZenControls, reader, splitMode, onExitZen, onTripleTap, onToggleSplitMode, onSetSplitMode, emptyVocabCard, externalListState = vocabListState)
+    } else {
+        Column(modifier) {
+            if (splitMode != SplitMode.ONLY_VOCAB) {
+                PdfPane(
+                    "BOOK",
+                    reader.book,
+                    if (splitMode == SplitMode.SPLIT_BOTH) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxSize(),
+                    reader::setBookPage,
+                    reader.isDarkMode,
+                    isZenMode,
+                    showZenControls,
+                    onToggleZenControls,
+                    reader,
+                    splitMode,
+                    onExitZen,
+                    onTripleTap,
+                    onToggleSplitMode,
+                    onSetSplitMode,
+                    emptyBookCard,
+                    externalListState = bookListState
+                )
+            }
+            if (splitMode == SplitMode.SPLIT_BOTH) {
+                HorizontalDivider(thickness = 3.dp, color = MaterialTheme.colorScheme.primary)
+            }
+            if (splitMode != SplitMode.ONLY_BOOK) {
+                PdfPane(
+                    "VOCAB",
+                    reader.vocab,
+                    if (splitMode == SplitMode.SPLIT_BOTH) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxSize(),
+                    reader::setVocabPage,
+                    reader.isDarkMode,
+                    isZenMode,
+                    showZenControls,
+                    onToggleZenControls,
+                    reader,
+                    splitMode,
+                    onExitZen,
+                    onTripleTap,
+                    onToggleSplitMode,
+                    onSetSplitMode,
+                    emptyVocabCard,
+                    externalListState = vocabListState
+                )
+            }
         }
     }
 }
@@ -3387,6 +3465,7 @@ fun PdfPane(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .background(if (isDarkMode) androidx.compose.ui.graphics.Color(0xFF1E1E1E) else androidx.compose.ui.graphics.Color(0xFFF5F5F5))
                 .pointerInput(isZenMode) {
                     detectMultiTapGestures(
                         onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
@@ -3399,6 +3478,7 @@ fun PdfPane(
                     url = reader.googleSearchQuery,
                     rawQuery = reader.googleRawQuery,
                     searchToken = reader.googleSearchToken,
+                    isDarkMode = isDarkMode,
                     onBackToVocab = { reader.vocabMode = VocabMode.VOCAB_PDF }
                 )
             } else {
@@ -3526,7 +3606,7 @@ fun PdfPane(
             val shouldShowPopup = when (splitMode) {
                 SplitMode.SPLIT_BOTH -> {
                     if (reader.book.activeSelection != null) {
-                        label == "VOCAB"
+                        label == "VOCAB" && reader.vocabMode != VocabMode.GOOGLE_WEB
                     } else if (reader.vocab.activeSelection != null) {
                         label == "BOOK"
                     } else {
@@ -3534,7 +3614,7 @@ fun PdfPane(
                     }
                 }
                 SplitMode.ONLY_BOOK -> label == "BOOK" && reader.book.activeSelection != null
-                SplitMode.ONLY_VOCAB -> label == "VOCAB" && reader.vocab.activeSelection != null
+                SplitMode.ONLY_VOCAB -> label == "VOCAB" && reader.vocab.activeSelection != null && reader.vocabMode != VocabMode.GOOGLE_WEB
             }
             val dictSummary = reader.dictSummary
             if (shouldShowPopup && dictSummary != null && reader.showDictPopup && !reader.isDraggingSelection) {
@@ -4739,6 +4819,8 @@ fun PaneSelectionToolbar(
                 val cleanQuery = fullText.filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
                 android.util.Log.i("SelectionDebug", "onSearch: sel=$sel, queryLen=${cleanQuery.length}, preview='${cleanQuery.take(100)}' ... '${cleanQuery.takeLast(100)}'")
                 if (cleanQuery.isNotBlank()) {
+                    reader.showDictPopup = false
+                    reader.dictSummary = null
                     reader.searchGoogle(cleanQuery)
                     onOpenGoogle?.invoke()
                 }
@@ -5157,6 +5239,8 @@ fun PaneHighlightToolbar(
                 val fullQuery = related.joinToString(" ") { it.text }
                     .filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
                 if (fullQuery.isNotBlank()) {
+                    reader.showDictPopup = false
+                    reader.dictSummary = null
                     reader.searchGoogle(fullQuery)
                     onOpenGoogle?.invoke()
                 }
@@ -5418,6 +5502,7 @@ fun GoogleWebView(
     url: String,
     rawQuery: String = "",
     searchToken: Long = 0L,
+    isDarkMode: Boolean = false,
     onBackToVocab: () -> Unit = {}
 ) {
     var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
@@ -5426,6 +5511,10 @@ fun GoogleWebView(
     var canGoForward by remember { mutableStateOf(false) }
     var pageTitle by remember { mutableStateOf("Google Search") }
     var lastInjectedToken by remember { mutableLongStateOf(0L) }
+    var isPageLoading by remember { mutableStateOf(true) }
+
+    val bgColor = if (isDarkMode) androidx.compose.ui.graphics.Color(0xFF202124) else androidx.compose.ui.graphics.Color.White
+    val nativeBgColor = if (isDarkMode) android.graphics.Color.parseColor("#202124") else android.graphics.Color.WHITE
 
     fun injectFullQueryIntoSearchBox(view: android.webkit.WebView?, pageUrl: String?) {
         val sanitizedQuery = rawQuery.filter { it >= ' ' || it == '\n' || it == '\t' }
@@ -5479,6 +5568,7 @@ fun GoogleWebView(
         if (url.isNotBlank()) {
             if (url != currentLoadedUrl) {
                 currentLoadedUrl = url
+                isPageLoading = true
                 webViewRef?.loadUrl(url)
             } else {
                 injectFullQueryIntoSearchBox(webViewRef, webViewRef?.url)
@@ -5495,7 +5585,7 @@ fun GoogleWebView(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().background(bgColor)) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth()
@@ -5525,7 +5615,10 @@ fun GoogleWebView(
                 }
 
                 TextButton(
-                    onClick = { webViewRef?.reload() },
+                    onClick = {
+                        isPageLoading = true
+                        webViewRef?.reload()
+                    },
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text("↻ Reload", style = MaterialTheme.typography.labelMedium)
@@ -5542,51 +5635,78 @@ fun GoogleWebView(
                 )
             }
         }
-        AndroidView(
-            factory = { ctx ->
-                android.webkit.WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.textZoom = 110
-                    setInitialScale(110)
-                    webViewClient = object : android.webkit.WebViewClient() {
-                        override fun onPageStarted(view: android.webkit.WebView?, pageUrl: String?, favicon: android.graphics.Bitmap?) {
-                            super.onPageStarted(view, pageUrl, favicon)
-                            canGoBack = view?.canGoBack() == true
-                            canGoForward = view?.canGoForward() == true
-                        }
 
-                        override fun onPageFinished(view: android.webkit.WebView?, pageUrl: String?) {
-                            super.onPageFinished(view, pageUrl)
-                            canGoBack = view?.canGoBack() == true
-                            canGoForward = view?.canGoForward() == true
-                            pageTitle = view?.title ?: "Google Search"
-                            injectFullQueryIntoSearchBox(view, pageUrl)
-                        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(bgColor)
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    android.webkit.WebView(ctx).apply {
+                        layoutParams = android.view.ViewGroup.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        setBackgroundColor(nativeBgColor)
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.textZoom = 110
+                        setInitialScale(110)
+                        webViewClient = object : android.webkit.WebViewClient() {
+                            override fun onPageStarted(view: android.webkit.WebView?, pageUrl: String?, favicon: android.graphics.Bitmap?) {
+                                super.onPageStarted(view, pageUrl, favicon)
+                                isPageLoading = true
+                                canGoBack = view?.canGoBack() == true
+                                canGoForward = view?.canGoForward() == true
+                            }
 
-                        override fun doUpdateVisitedHistory(view: android.webkit.WebView?, pageUrl: String?, isReload: Boolean) {
-                            super.doUpdateVisitedHistory(view, pageUrl, isReload)
-                            canGoBack = view?.canGoBack() == true
-                            canGoForward = view?.canGoForward() == true
+                            override fun onPageFinished(view: android.webkit.WebView?, pageUrl: String?) {
+                                super.onPageFinished(view, pageUrl)
+                                isPageLoading = false
+                                canGoBack = view?.canGoBack() == true
+                                canGoForward = view?.canGoForward() == true
+                                pageTitle = view?.title ?: "Google Search"
+                                injectFullQueryIntoSearchBox(view, pageUrl)
+                            }
+
+                            override fun doUpdateVisitedHistory(view: android.webkit.WebView?, pageUrl: String?, isReload: Boolean) {
+                                super.doUpdateVisitedHistory(view, pageUrl, isReload)
+                                canGoBack = view?.canGoBack() == true
+                                canGoForward = view?.canGoForward() == true
+                            }
                         }
+                        loadUrl(url)
+                        currentLoadedUrl = url
+                        webViewRef = this
                     }
-                    loadUrl(url)
-                    currentLoadedUrl = url
-                    webViewRef = this
-                }
-            },
-            update = { webView ->
-                webViewRef = webView
-                if (url != currentLoadedUrl && url.isNotBlank()) {
-                    currentLoadedUrl = url
-                    webView.loadUrl(url)
-                }
-            },
-            onRelease = { webView ->
-                webView.destroy()
-            },
-            modifier = Modifier.weight(1f).fillMaxWidth()
-        )
+                },
+                update = { webView ->
+                    webViewRef = webView
+                    webView.setBackgroundColor(nativeBgColor)
+                    if (url != currentLoadedUrl && url.isNotBlank()) {
+                        isPageLoading = true
+                        currentLoadedUrl = url
+                        webView.loadUrl(url)
+                    }
+                },
+                onRelease = { webView ->
+                    webView.destroy()
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            if (isPageLoading) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.5.dp)
+                        .align(Alignment.TopCenter),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
     }
 }
 
