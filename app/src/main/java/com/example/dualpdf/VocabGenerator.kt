@@ -406,30 +406,30 @@ object VocabGenerator {
 
         val textPaint = TextPaint().apply {
             color = Color.rgb(45, 55, 72)
-            textSize = 11f
+            textSize = 16.5f
             isAntiAlias = true
         }
         val wordPaint = TextPaint().apply {
             color = Color.rgb(26, 54, 93) // deep navy
-            textSize = 13f
+            textSize = 19.5f
             isFakeBoldText = true
             isAntiAlias = true
         }
         val scorePaint = TextPaint().apply {
             color = Color.rgb(113, 128, 150) // same color as words under antonyms
-            textSize = 13f
+            textSize = 19.5f
             isFakeBoldText = true
             isAntiAlias = true
         }
         val headerPaint = TextPaint().apply {
             color = Color.rgb(43, 108, 176) // blue
-            textSize = 16f
+            textSize = 24f
             isFakeBoldText = true
             isAntiAlias = true
         }
         val noWordsPaint = TextPaint().apply {
             color = Color.GRAY
-            textSize = 12f
+            textSize = 18f
             textSkewX = -0.25f // fake italic
             isAntiAlias = true
         }
@@ -480,9 +480,12 @@ object VocabGenerator {
                 val textWidth = 612f - (margin * 2) // 512f
                 val pageBottomLimit = 740f
 
+                val headerSpacing = 35f
+                val contentStartY = yOffset + headerSpacing
+
                 // Draw header
                 canvas.drawText("Page $i", margin, yOffset, headerPaint)
-                yOffset += 30f
+                yOffset += headerSpacing
 
                 if (validWords.isEmpty()) {
                     canvas.drawText("No uncommon words on this page.", margin, yOffset, noWordsPaint)
@@ -490,7 +493,7 @@ object VocabGenerator {
                     vocabPageNum++
                 } else {
                     for ((word, entry) in validWords) {
-                        val wordHeaderHeight = 18f
+                        val wordHeaderHeight = 26f
 
                         // Prepare StaticLayouts for all POS entries
                         val posLayouts = mutableListOf<StaticLayout>()
@@ -500,16 +503,16 @@ object VocabGenerator {
                             val span = buildPosSpannable(pos)
                             val sl = StaticLayout.Builder.obtain(span, 0, span.length, textPaint, textWidth.toInt())
                                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                                .setLineSpacing(2f, 1f)
+                                .setLineSpacing(3f, 1f)
                                 .setIncludePad(false)
                                 .build()
                             posLayouts.add(sl)
-                            totalWordEntryHeight += sl.height + 8f
+                            totalWordEntryHeight += sl.height + 10f
                         }
-                        totalWordEntryHeight += 10f // gap between words
+                        totalWordEntryHeight += 14f // gap between words
 
                         // Page overflow check for entire word
-                        if (yOffset + totalWordEntryHeight > pageBottomLimit && yOffset > 80f) {
+                        if (yOffset + totalWordEntryHeight > pageBottomLimit && yOffset > contentStartY) {
                             androidDoc.finishPage(page)
                             vocabPageNum++
 
@@ -519,7 +522,7 @@ object VocabGenerator {
                             yOffset = 50f
 
                             canvas.drawText("Page $i (continued)", margin, yOffset, headerPaint)
-                            yOffset += 30f
+                            yOffset += headerSpacing
                         }
 
                         // Draw Word Headword (Bold Navy) and Score (Antonym Red)
@@ -533,7 +536,7 @@ object VocabGenerator {
 
                         // Draw each POS block
                         for (sl in posLayouts) {
-                            if (yOffset + sl.height > pageBottomLimit && yOffset > 80f) {
+                            if (yOffset + sl.height > pageBottomLimit && yOffset > contentStartY) {
                                 androidDoc.finishPage(page)
                                 vocabPageNum++
 
@@ -543,7 +546,7 @@ object VocabGenerator {
                                 yOffset = 50f
 
                                 canvas.drawText("Page $i (continued)", margin, yOffset, headerPaint)
-                                yOffset += 30f
+                                yOffset += headerSpacing
 
                                 val contWord = "$word (cont.)"
                                 canvas.drawText(contWord, margin, yOffset, wordPaint)
@@ -560,10 +563,10 @@ object VocabGenerator {
                             sl.draw(canvas)
                             canvas.restore()
 
-                            yOffset += sl.height + 8f
+                            yOffset += sl.height + 10f
                         }
 
-                        yOffset += 10f // gap after word entry
+                        yOffset += 14f // gap after word entry
                     }
 
                     androidDoc.finishPage(page)
