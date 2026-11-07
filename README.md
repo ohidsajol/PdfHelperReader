@@ -1,4 +1,4 @@
-# PdfHelperReader (v4.0.1)
+# PdfHelperReader (v4.1.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -6,6 +6,22 @@
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
 **PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
+
+---
+
+## 🌟 What's New in v4.1.0
+
+### 🔤 1.5× Larger Typography for Vocabulary PDFs
+* **Enlarged Fonts**: Generated vocabulary companion PDFs now render with 1.5× larger, high-clarity typography (24pt headers, 19.5pt headwords & scores, and 16.5pt definitions, examples, synonyms, and antonyms).
+* **Balanced Spacing**: Proportional vertical spacing, line leading, and inter-entry margins provide an effortless, fatigue-free reading experience on phones and tablets.
+
+### 🌐 Instant Flash-Free Google Web Search
+* **Pre-warmed Chromium Engine**: Native WebView libraries are pre-initialized smoothly in the background, eliminating cold-start frame drops.
+* **Preserved Split-Pane Layout**: The main book pane remains mounted without re-rendering or canvas flashing during split-mode transitions.
+* **Auto-Dismissing Definition Popup**: Opening Google search from selected text automatically dismisses the definition popup so it doesn't obstruct the lower web pane.
+
+### 🎚️ Vocabulary Word-Frequency Filtering Slider
+* **Adjustable Density**: Filter dictionary vocabulary extraction density (1–100) on-demand before generating sidecar PDFs.
 
 ---
 
@@ -79,7 +95,7 @@
 
 ## 📦 Download & Installation
 Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
-* **[PdfHelperReader-v4.0.1.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.0.1/PdfHelperReader-v4.0.1.apk)**
+* **[PdfHelperReader-v4.1.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.1.0/PdfHelperReader-v4.1.0.apk)**
 
 To build from source:
 ```bash
