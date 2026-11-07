@@ -209,11 +209,21 @@ fun InteractivePdfPage(
 
                                 val hit = PdfTextHelper.findHighlightAt(pageHighlights, xNorm, yNorm)
                                 if (hit != null) {
+                                    val otherPane = if (pane == reader.book) reader.vocab else reader.book
+                                    otherPane.activeHighlightMenu = null
+                                    otherPane.activeSelection = null
                                     pane.activeHighlightMenu = hit
-                                    pane.activeSelection = null
+                                    reader.book.activeSelection = null
+                                    reader.vocab.activeSelection = null
+                                    reader.dictSummary = null
+                                    reader.showDictPopup = false
                                 } else {
-                                    pane.activeHighlightMenu = null
-                                    pane.activeSelection = null
+                                    reader.book.activeHighlightMenu = null
+                                    reader.vocab.activeHighlightMenu = null
+                                    reader.book.activeSelection = null
+                                    reader.vocab.activeSelection = null
+                                    reader.dictSummary = null
+                                    reader.showDictPopup = false
                                 }
                             }
                         },
@@ -243,6 +253,9 @@ fun InteractivePdfPage(
                                         } else break
                                     } else break
                                 }
+                                val otherPane = if (pane == reader.book) reader.vocab else reader.book
+                                otherPane.activeSelection = null
+                                otherPane.activeHighlightMenu = null
                                 pane.activeSelection = TextSelection(
                                     startPageIndex = pageIndex,
                                     startWordIndex = wordIdx,
@@ -367,7 +380,7 @@ fun InteractivePdfPage(
                                 )
 
                                 val curXNorm = (dragStartCumulative.x / currentWPx).coerceIn(0f, 1f)
-                                val targetWords = doc.getWords(targetPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), targetPage)
+                                val targetWords = doc.getWords(targetPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), targetPage)
 
                                 if (targetWords.isNotEmpty()) {
                                     val targetIdx = PdfTextHelper.findSelectionWordAt(targetWords, curXNorm, targetYNorm, isEndHandle = false)
@@ -439,7 +452,7 @@ fun InteractivePdfPage(
                                 )
 
                                 val curXNorm = (dragEndCumulative.x / currentWPx).coerceIn(0f, 1f)
-                                val targetWords = doc.getWords(targetPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), targetPage)
+                                val targetWords = doc.getWords(targetPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), targetPage)
 
                                 if (targetWords.isNotEmpty()) {
                                     val targetIdx = PdfTextHelper.findSelectionWordAt(targetWords, curXNorm, targetYNorm, isEndHandle = true)
@@ -492,6 +505,9 @@ fun SelectionFloatingToolbar(
             .fillMaxWidth()
             .widthIn(max = 410.dp)
             .padding(1.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { /* consume tap inside toolbar */ }
+            }
     ) {
         Row(
             modifier = Modifier
@@ -554,6 +570,9 @@ fun ExistingHighlightToolbar(
             .fillMaxWidth()
             .widthIn(max = 410.dp)
             .padding(1.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { /* consume tap inside toolbar */ }
+            }
     ) {
         Row(
             modifier = Modifier

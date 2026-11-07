@@ -1852,7 +1852,7 @@ fun ReaderScreen(reader: Reader) {
     val activeSel = reader.activeSelection
     val activePane = if (reader.book.activeSelection != null) reader.book else reader.vocab
 
-    LaunchedEffect(activeSel) {
+    LaunchedEffect(activePane, activeSel) {
         if (activeSel == null) {
             reader.dictSummary = null
             return@LaunchedEffect
@@ -1865,7 +1865,7 @@ fun ReaderScreen(reader: Reader) {
         withContext(Dispatchers.IO) {
             VocabGenerator.init(ctx)
             val fullText = (activeSel.minPage..activeSel.maxPage).mapNotNull { p ->
-                val pWords = activeDoc.getWords(p) ?: activeDoc.getOrExtractWords(ctx, activePane.uri ?: reader.getBookUri(), p)
+                val pWords = activeDoc.getWords(p) ?: activeDoc.getOrExtractWords(ctx, activePane.uri ?: (if (activePane == reader.book) reader.getBookUri() else null), p)
                 val pRange = activeSel.wordRangeForPage(p, pWords.size)
                 if (pRange != null && pWords.isNotEmpty()) {
                     PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
@@ -2760,7 +2760,15 @@ fun ReaderScreen(reader: Reader) {
                 val expectedName = reader.expectedVocab ?: "vocab.pdf"
                 val existingFile = File(vocabDir, expectedName)
                 val prefs = remember { ctx.getSharedPreferences("dual_pdf_reader", Context.MODE_PRIVATE) }
-                val savedThreshold = prefs.getFloat("last_vocab_threshold", 37f)
+                val savedThreshold = try {
+                    prefs.getFloat("last_vocab_threshold", 37f)
+                } catch (_: Exception) {
+                    try {
+                        prefs.getString("last_vocab_threshold", null)?.toFloatOrNull() ?: 37f
+                    } catch (_: Exception) {
+                        37f
+                    }
+                }
 
                 VocabThresholdDialog(
                     initialThreshold = savedThreshold,
@@ -2768,7 +2776,7 @@ fun ReaderScreen(reader: Reader) {
                     onDismiss = { showVocabThresholdDialog = false },
                     onGenerate = { selectedThreshold ->
                         showVocabThresholdDialog = false
-                        prefs.edit().putFloat("last_vocab_threshold", selectedThreshold).apply()
+                        prefs.edit().remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold).apply()
                         executeGenerateVocab(selectedThreshold)
                     },
                     onOpenExisting = {
@@ -3515,17 +3523,33 @@ fun PdfPane(
                 }
             }
 
-            val shouldShowPopup = (label == "VOCAB") || (splitMode == SplitMode.ONLY_BOOK && label == "BOOK")
+            val shouldShowPopup = when (splitMode) {
+                SplitMode.SPLIT_BOTH -> {
+                    if (reader.book.activeSelection != null) {
+                        label == "VOCAB"
+                    } else if (reader.vocab.activeSelection != null) {
+                        label == "BOOK"
+                    } else {
+                        false
+                    }
+                }
+                SplitMode.ONLY_BOOK -> label == "BOOK" && reader.book.activeSelection != null
+                SplitMode.ONLY_VOCAB -> label == "VOCAB" && reader.vocab.activeSelection != null
+            }
             val dictSummary = reader.dictSummary
             if (shouldShowPopup && dictSummary != null && reader.showDictPopup && !reader.isDraggingSelection) {
-                val hasSelectionInThisPane = pane.activeSelection != null
+                val align = if (splitMode == SplitMode.SPLIT_BOTH) {
+                    if (label == "BOOK") Alignment.BottomCenter else Alignment.TopCenter
+                } else {
+                    Alignment.BottomCenter
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .align(if (hasSelectionInThisPane || splitMode == SplitMode.ONLY_BOOK) Alignment.BottomCenter else Alignment.TopCenter)
+                        .align(align)
                         .padding(
-                            top = if (!hasSelectionInThisPane && splitMode != SplitMode.ONLY_BOOK) 10.dp else 0.dp,
-                            bottom = if (hasSelectionInThisPane || splitMode == SplitMode.ONLY_BOOK) 16.dp else 0.dp,
+                            top = if (align == Alignment.TopCenter) 10.dp else 0.dp,
+                            bottom = if (align == Alignment.BottomCenter) 14.dp else 0.dp,
                             start = 6.dp,
                             end = 6.dp
                         ),
@@ -3778,8 +3802,12 @@ fun PageView(
                     onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
                     onTripleTap = { onTripleTap() },
                     onTap = {
-                        pane.activeSelection = null
-                        pane.activeHighlightMenu = null
+                        reader.book.activeSelection = null
+                        reader.vocab.activeSelection = null
+                        reader.book.activeHighlightMenu = null
+                        reader.vocab.activeHighlightMenu = null
+                        reader.dictSummary = null
+                        reader.showDictPopup = false
                     }
                 )
             }
@@ -4642,6 +4670,7 @@ fun PaneSelectionToolbar(
     val activeSel = pane.activeSelection ?: return
     val ctx = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    var currentHighlightGroupId by remember(activeSel) { mutableStateOf<String?>(null) }
 
     Box(
         modifier = Modifier
@@ -4653,9 +4682,15 @@ fun PaneSelectionToolbar(
         SelectionFloatingToolbar(
             onHighlight = { colorHex ->
                 val sel = pane.activeSelection ?: activeSel
-                val groupId = UUID.randomUUID().toString()
+                val groupId = currentHighlightGroupId ?: UUID.randomUUID().toString()
+
+                if (currentHighlightGroupId != null) {
+                    reader.highlights.removeAll { it.groupId == currentHighlightGroupId }
+                }
+                currentHighlightGroupId = groupId
+
                 val newHighlights = (sel.minPage..sel.maxPage).mapNotNull { p ->
-                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
                         val pText = PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last)
@@ -4676,12 +4711,11 @@ fun PaneSelectionToolbar(
                     reader.addHighlights(newHighlights)
                     Toast.makeText(ctx, "Highlighted!", Toast.LENGTH_SHORT).show()
                 }
-                pane.activeSelection = null
             },
             onCopy = {
                 val sel = pane.activeSelection ?: activeSel
                 val fullText = (sel.minPage..sel.maxPage).mapNotNull { p ->
-                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
                         PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
@@ -4692,12 +4726,11 @@ fun PaneSelectionToolbar(
                     clipboardManager.setText(AnnotatedString(fullText))
                     Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                 }
-                pane.activeSelection = null
             },
             onSearch = {
                 val sel = pane.activeSelection ?: activeSel
                 val fullText = (sel.minPage..sel.maxPage).mapNotNull { p ->
-                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
                         PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
@@ -4709,12 +4742,11 @@ fun PaneSelectionToolbar(
                     reader.searchGoogle(cleanQuery)
                     onOpenGoogle?.invoke()
                 }
-                pane.activeSelection = null
             },
             onShare = {
                 val sel = pane.activeSelection ?: activeSel
                 val fullText = (sel.minPage..sel.maxPage).mapNotNull { p ->
-                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), p)
+                    val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
                         PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
@@ -4728,14 +4760,16 @@ fun PaneSelectionToolbar(
                     }
                     ctx.startActivity(Intent.createChooser(sendIntent, "Share text"))
                 }
-                pane.activeSelection = null
             },
             onSelectAll = {
+                val otherPane = if (pane == reader.book) reader.vocab else reader.book
+                otherPane.activeSelection = null
+                otherPane.activeHighlightMenu = null
                 val sel = pane.activeSelection ?: activeSel
                 if (!sel.isSinglePage) {
                     // Multi-page selection -> select entire document
                     val lastPage = (doc.pageCount - 1).coerceAtLeast(0)
-                    val lastWords = doc.getWords(lastPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), lastPage)
+                    val lastWords = doc.getWords(lastPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), lastPage)
                     val lastWordIdx = (lastWords.size - 1).coerceAtLeast(0)
                     pane.activeSelection = TextSelection(
                         startPageIndex = 0,
@@ -4746,7 +4780,7 @@ fun PaneSelectionToolbar(
                 } else {
                     // Single-page selection -> select all words on the current page
                     val curPage = sel.startPageIndex
-                    val pageWords = doc.getWords(curPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: reader.getBookUri(), curPage)
+                    val pageWords = doc.getWords(curPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), curPage)
                     if (pageWords.isNotEmpty()) {
                         pane.activeSelection = TextSelection(
                             startPageIndex = curPage,
@@ -4759,6 +4793,10 @@ fun PaneSelectionToolbar(
             },
             onDismiss = {
                 pane.activeSelection = null
+                reader.book.activeSelection = null
+                reader.vocab.activeSelection = null
+                reader.dictSummary = null
+                reader.showDictPopup = false
             }
         )
     }
@@ -4779,6 +4817,9 @@ fun WordSynonymAntonymPopup(
             .fillMaxWidth()
             .widthIn(max = 410.dp)
             .padding(horizontal = 4.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { /* consume taps inside popup */ }
+            }
     ) {
         Column(
             modifier = Modifier
@@ -5093,12 +5134,14 @@ fun PaneHighlightToolbar(
             highlight = highlight,
             onColorChange = { newColorHex ->
                 reader.updateHighlightColor(highlight, newColorHex)
-                pane.activeHighlightMenu = null
+                pane.activeHighlightMenu = highlight.copy(colorHex = newColorHex)
             },
             onDelete = {
                 reader.removeHighlight(highlight)
                 Toast.makeText(ctx, "Highlight deleted", Toast.LENGTH_SHORT).show()
                 pane.activeHighlightMenu = null
+                reader.book.activeHighlightMenu = null
+                reader.vocab.activeHighlightMenu = null
             },
             onCopy = {
                 val related = reader.getRelatedHighlights(highlight)
@@ -5108,7 +5151,6 @@ fun PaneHighlightToolbar(
                     clipboardManager.setText(AnnotatedString(fullText))
                     Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                 }
-                pane.activeHighlightMenu = null
             },
             onSearch = {
                 val related = reader.getRelatedHighlights(highlight)
@@ -5118,10 +5160,11 @@ fun PaneHighlightToolbar(
                     reader.searchGoogle(fullQuery)
                     onOpenGoogle?.invoke()
                 }
-                pane.activeHighlightMenu = null
             },
             onDismiss = {
                 pane.activeHighlightMenu = null
+                reader.book.activeHighlightMenu = null
+                reader.vocab.activeHighlightMenu = null
             }
         )
     }
@@ -5187,8 +5230,12 @@ fun ContinuousPageView(
                     onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
                     onTripleTap = { onTripleTap() },
                     onTap = {
-                        pane.activeSelection = null
-                        pane.activeHighlightMenu = null
+                        reader.book.activeSelection = null
+                        reader.vocab.activeSelection = null
+                        reader.book.activeHighlightMenu = null
+                        reader.vocab.activeHighlightMenu = null
+                        reader.dictSummary = null
+                        reader.showDictPopup = false
                     }
                 )
             }
@@ -5268,8 +5315,12 @@ fun ContinuousPageView(
                                 detectTapGestures(
                                     onTap = {
                                         if (!pane.isDraggingSelection) {
-                                            pane.activeSelection = null
-                                            pane.activeHighlightMenu = null
+                                            reader.book.activeSelection = null
+                                            reader.vocab.activeSelection = null
+                                            reader.book.activeHighlightMenu = null
+                                            reader.vocab.activeHighlightMenu = null
+                                            reader.dictSummary = null
+                                            reader.showDictPopup = false
                                         }
                                     }
                                 )
