@@ -62,12 +62,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -81,6 +89,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -114,6 +123,11 @@ fun InteractivePdfPage(
 
     var isDraggingStart by remember(pageIndex) { mutableStateOf(false) }
     var isDraggingEnd by remember(pageIndex) { mutableStateOf(false) }
+    var isLongPressDragging by remember(pageIndex) { mutableStateOf(false) }
+
+    var dragStartCumulative by remember(pageIndex) { mutableStateOf(Offset.Zero) }
+    var dragEndCumulative by remember(pageIndex) { mutableStateOf(Offset.Zero) }
+    var longPressCumulative by remember(pageIndex) { mutableStateOf(Offset.Zero) }
 
     val pageHighlights = reader.highlights.filter { it.pageIndex == pageIndex }
 
@@ -287,7 +301,15 @@ fun InteractivePdfPage(
                                 )
                                 pane.activeHighlightMenu = null
                                 reader.tappedHighlightWord = null
+
+                                isLongPressDragging = true
+                                pane.isDraggingSelection = true
+                                longPressCumulative = pressOffset
                             }
+                        },
+                        onLongPressEnd = {
+                            isLongPressDragging = false
+                            pane.isDraggingSelection = false
                         }
                     )
                 }
@@ -378,7 +400,6 @@ fun InteractivePdfPage(
                 (calcStartHandleX - halfTouchPx).roundToInt(),
                 (calcStartHandleY - halfTouchPx).roundToInt()
             )
-            var dragStartCumulative by remember { mutableStateOf(Offset.Zero) }
 
             // Start Handle Drag Box
             Box(
@@ -465,7 +486,6 @@ fun InteractivePdfPage(
                 (calcEndHandleX - halfTouchPx).roundToInt(),
                 (calcEndHandleY - halfTouchPx).roundToInt()
             )
-            var dragEndCumulative by remember { mutableStateOf(Offset.Zero) }
 
             // End Handle Drag Box
             Box(
@@ -542,6 +562,305 @@ fun InteractivePdfPage(
                         )
                     }
             )
+        }
+
+        // 4. Floating Selection Magnifier Loupe
+        val activeMagnifierInfo = remember(
+            isDraggingStart, isDraggingEnd, isLongPressDragging,
+            dragStartCumulative, dragEndCumulative, longPressCumulative,
+            activeSelection, pageIndex
+        ) {
+            if (activeSelection == null) return@remember null
+            if (isDraggingStart) {
+                val (targetPage, targetYNorm) = PdfTextHelper.resolveContinuousPage(
+                    fromPage = pageIndex,
+                    yOffset = dragStartCumulative.y,
+                    displayedWPx = currentWPx,
+                    docPageCount = doc.pageCount,
+                    spacerPx = with(density) { 16.dp.toPx() },
+                    getPageRatio = { p -> doc.getPageRatio(p) ?: 0.707f }
+                )
+                MagnifierInfo(
+                    touchOffset = dragStartCumulative,
+                    targetPage = targetPage,
+                    targetYNorm = targetYNorm,
+                    isEndHandle = false
+                )
+            } else if (isDraggingEnd) {
+                val (targetPage, targetYNorm) = PdfTextHelper.resolveContinuousPage(
+                    fromPage = pageIndex,
+                    yOffset = dragEndCumulative.y,
+                    displayedWPx = currentWPx,
+                    docPageCount = doc.pageCount,
+                    spacerPx = with(density) { 16.dp.toPx() },
+                    getPageRatio = { p -> doc.getPageRatio(p) ?: 0.707f }
+                )
+                MagnifierInfo(
+                    touchOffset = dragEndCumulative,
+                    targetPage = targetPage,
+                    targetYNorm = targetYNorm,
+                    isEndHandle = true
+                )
+            } else if (isLongPressDragging) {
+                val (targetPage, targetYNorm) = PdfTextHelper.resolveContinuousPage(
+                    fromPage = pageIndex,
+                    yOffset = longPressCumulative.y,
+                    displayedWPx = currentWPx,
+                    docPageCount = doc.pageCount,
+                    spacerPx = with(density) { 16.dp.toPx() },
+                    getPageRatio = { p -> doc.getPageRatio(p) ?: 0.707f }
+                )
+                MagnifierInfo(
+                    touchOffset = longPressCumulative,
+                    targetPage = targetPage,
+                    targetYNorm = targetYNorm,
+                    isEndHandle = true
+                )
+            } else {
+                null
+            }
+        }
+
+        if (activeMagnifierInfo != null) {
+            val targetPage = activeMagnifierInfo.targetPage
+            val targetBitmap = if (targetPage == pageIndex) bitmap else doc.getAnyCachedBitmap(targetPage)?.asImageBitmap()
+            val targetWords = if (targetPage == pageIndex) currentWordsList else (doc.getWords(targetPage) ?: emptyList())
+            val targetHighlights = reader.highlights.filter { it.pageIndex == targetPage }
+            val targetRatio = doc.getPageRatio(targetPage) ?: 0.707f
+            val targetHPx = currentWPx / targetRatio
+
+            SelectionMagnifierLoupe(
+                info = activeMagnifierInfo,
+                targetBitmap = targetBitmap,
+                targetWords = targetWords,
+                targetHighlights = targetHighlights,
+                activeSelection = activeSelection,
+                displayedWPx = currentWPx,
+                targetHPx = targetHPx,
+                colorFilter = colorFilter,
+                isDarkMode = reader.isDarkMode
+            )
+        }
+    }
+}
+
+data class MagnifierInfo(
+    val touchOffset: Offset,
+    val targetPage: Int,
+    val targetYNorm: Float,
+    val isEndHandle: Boolean
+)
+
+object SelectionMagnifierHelper {
+    fun calculateLoupePosition(
+        touchX: Float,
+        touchY: Float,
+        loupeWPx: Float,
+        loupeHPx: Float,
+        displayedWPx: Float,
+        padPx: Float = 16f,
+        gapPx: Float = 48f,
+        bottomFlipPx: Float = 72f
+    ): Offset {
+        val minX = padPx
+        val maxX = maxOf(padPx, displayedWPx - loupeWPx - padPx)
+        val loupeLeft = (touchX - loupeWPx / 2f).coerceIn(minX, maxX)
+
+        var loupeTop = touchY - loupeHPx - gapPx
+        if (loupeTop < padPx) {
+            loupeTop = touchY + bottomFlipPx
+        }
+        return Offset(loupeLeft, loupeTop)
+    }
+
+    fun calculateSourcePosition(
+        touchX: Float,
+        targetYNorm: Float,
+        displayedWPx: Float,
+        targetHPx: Float,
+        targetWords: List<PdfWord>,
+        selectedWordIndex: Int?
+    ): Offset {
+        val sourceX = touchX.coerceIn(0f, displayedWPx)
+        val wordIdx = selectedWordIndex?.coerceIn(0, maxOf(0, targetWords.size - 1))
+        val sourceY = if (wordIdx != null && wordIdx in targetWords.indices) {
+            val w = targetWords[wordIdx]
+            (w.top + w.bottom) / 2f * targetHPx
+        } else {
+            (targetYNorm * targetHPx).coerceIn(0f, targetHPx)
+        }
+        return Offset(sourceX, sourceY)
+    }
+}
+
+@Composable
+fun SelectionMagnifierLoupe(
+    info: MagnifierInfo,
+    targetBitmap: ImageBitmap?,
+    targetWords: List<PdfWord>,
+    targetHighlights: List<Highlight>,
+    activeSelection: TextSelection?,
+    displayedWPx: Float,
+    targetHPx: Float,
+    colorFilter: ColorFilter?,
+    isDarkMode: Boolean
+) {
+    val density = LocalDensity.current
+    val loupeW = 120.dp
+    val loupeH = 56.dp
+    val loupeWPx = with(density) { loupeW.toPx() }
+    val loupeHPx = with(density) { loupeH.toPx() }
+    val cornerRadius = 28.dp
+    val cornerRadiusPx = with(density) { cornerRadius.toPx() }
+
+    val primaryHandleColor = MaterialTheme.colorScheme.primary
+    val selectionBgColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
+
+    val padPx = with(density) { 8.dp.toPx() }
+    val gapPx = with(density) { 24.dp.toPx() }
+    val bottomFlipPx = with(density) { 36.dp.toPx() }
+
+    val loupePos = remember(info.touchOffset, displayedWPx, loupeWPx, loupeHPx, padPx, gapPx, bottomFlipPx) {
+        SelectionMagnifierHelper.calculateLoupePosition(
+            touchX = info.touchOffset.x,
+            touchY = info.touchOffset.y,
+            loupeWPx = loupeWPx,
+            loupeHPx = loupeHPx,
+            displayedWPx = displayedWPx,
+            padPx = padPx,
+            gapPx = gapPx,
+            bottomFlipPx = bottomFlipPx
+        )
+    }
+
+    val selectedWordIndex = if (info.isEndHandle) {
+        activeSelection?.endWordIndex
+    } else {
+        activeSelection?.startWordIndex
+    }
+    val sourcePos = remember(info, selectedWordIndex, targetWords, displayedWPx, targetHPx) {
+        SelectionMagnifierHelper.calculateSourcePosition(
+            touchX = info.touchOffset.x,
+            targetYNorm = info.targetYNorm,
+            displayedWPx = displayedWPx,
+            targetHPx = targetHPx,
+            targetWords = targetWords,
+            selectedWordIndex = selectedWordIndex
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(loupePos.x.roundToInt(), loupePos.y.roundToInt()) }
+            .size(width = loupeW, height = loupeH)
+            .shadow(elevation = 8.dp, shape = RoundedCornerShape(cornerRadius), clip = false)
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(if (isDarkMode) Color(0xFF1E1E1E) else Color.White)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val zoom = 1.45f
+            val loupeCenter = Offset(size.width / 2f, size.height / 2f)
+
+            clipPath(
+                Path().apply {
+                    addRoundRect(
+                        RoundRect(
+                            rect = Rect(Offset.Zero, size),
+                            cornerRadius = CornerRadius(cornerRadiusPx, cornerRadiusPx)
+                        )
+                    )
+                }
+            ) {
+                // Background
+                drawRect(if (isDarkMode) Color(0xFF1E1E1E) else Color.White)
+
+                // Magnified content
+                translate(
+                    left = loupeCenter.x - sourcePos.x * zoom,
+                    top = loupeCenter.y - sourcePos.y * zoom
+                ) {
+                    scale(zoom, zoom, pivot = Offset.Zero) {
+                        // 1. Target page bitmap
+                        if (targetBitmap != null) {
+                            drawImage(
+                                image = targetBitmap,
+                                dstOffset = IntOffset.Zero,
+                                dstSize = IntSize(displayedWPx.roundToInt(), targetHPx.roundToInt()),
+                                colorFilter = colorFilter,
+                                filterQuality = FilterQuality.High
+                            )
+                        }
+
+                        // 2. Highlights
+                        targetHighlights.forEach { h ->
+                            val hlColor = parseHexColor(h.colorHex).copy(alpha = 0.42f)
+                            h.rects.forEach { r ->
+                                drawRoundRect(
+                                    color = hlColor,
+                                    topLeft = Offset(r.left * displayedWPx, r.top * targetHPx),
+                                    size = Size((r.right - r.left) * displayedWPx, (r.bottom - r.top) * targetHPx),
+                                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                                )
+                            }
+                        }
+
+                        // 3. Active selection highlight
+                        val pageWordRange = activeSelection?.wordRangeForPage(info.targetPage, targetWords.size)
+                        if (activeSelection != null && pageWordRange != null && targetWords.isNotEmpty()) {
+                            val (sChar, eChar) = activeSelection.charOffsetsForPage(info.targetPage, pageWordRange)
+                            val rects = PdfTextHelper.getSelectionRects(
+                                targetWords,
+                                pageWordRange.first,
+                                pageWordRange.last,
+                                sChar,
+                                eChar
+                            )
+                            rects.forEach { r ->
+                                drawRoundRect(
+                                    color = selectionBgColor,
+                                    topLeft = Offset(r.left * displayedWPx, r.top * targetHPx),
+                                    size = Size((r.right - r.left) * displayedWPx, (r.bottom - r.top) * targetHPx),
+                                    cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 4. Center vertical handle pin guide line
+                val pinTop = 8.dp.toPx()
+                val pinBottom = size.height - 8.dp.toPx()
+                drawLine(
+                    color = primaryHandleColor,
+                    start = Offset(loupeCenter.x, pinTop),
+                    end = Offset(loupeCenter.x, pinBottom),
+                    strokeWidth = 2.dp.toPx()
+                )
+
+                if (info.isEndHandle) {
+                    drawCircle(
+                        color = primaryHandleColor,
+                        radius = 4.5.dp.toPx(),
+                        center = Offset(loupeCenter.x, pinBottom + 1.dp.toPx())
+                    )
+                } else {
+                    drawCircle(
+                        color = primaryHandleColor,
+                        radius = 4.5.dp.toPx(),
+                        center = Offset(loupeCenter.x, pinTop - 1.dp.toPx())
+                    )
+                }
+
+                // 5. Border outline
+                val borderColor = if (isDarkMode) Color(0x66FFFFFF) else Color(0x33000000)
+                drawRoundRect(
+                    color = borderColor,
+                    topLeft = Offset.Zero,
+                    size = size,
+                    cornerRadius = CornerRadius(cornerRadiusPx, cornerRadiusPx),
+                    style = Stroke(width = 1.5.dp.toPx())
+                )
+            }
         }
     }
 }

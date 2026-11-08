@@ -86,6 +86,7 @@ suspend fun PointerInputScope.detectMultiTapGestures(
     onDoubleTap: ((Offset) -> Unit)? = null,
     onTripleTap: ((Offset) -> Unit)? = null,
     onLongPress: ((Offset) -> Unit)? = null,
+    onLongPressEnd: (() -> Unit)? = null,
     onTap: ((Offset) -> Unit)? = null
 ) {
     awaitEachGesture {
@@ -99,6 +100,7 @@ suspend fun PointerInputScope.detectMultiTapGestures(
                 LongPressResult.Success -> {
                     onLongPress.invoke(down.position)
                     consumeUntilUp()
+                    onLongPressEnd?.invoke()
                     return@awaitEachGesture
                 }
                 is LongPressResult.Released -> longPressResult.finalUpChange

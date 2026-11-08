@@ -317,8 +317,8 @@ class SelectionAndSearchTest {
     fun testBrowserClosesOnZenModeTransition() {
         var vocabMode = VocabMode.BROWSER
         val previousVocabMode: VocabMode? = VocabMode.VOCAB_PDF
-        var showBrowser = true
-        var isZenMode = false
+        val showBrowser: Boolean
+        val isZenMode: Boolean
 
         // User enters Zen mode while browser is in lower pane
         if (vocabMode == VocabMode.BROWSER) {
@@ -330,5 +330,105 @@ class SelectionAndSearchTest {
         assertEquals(VocabMode.VOCAB_PDF, vocabMode)
         assertEquals(false, showBrowser)
         assertEquals(true, isZenMode)
+    }
+
+    @Test
+    fun testSelectionMagnifierLoupePositionNormal() {
+        val pos = SelectionMagnifierHelper.calculateLoupePosition(
+            touchX = 500f,
+            touchY = 600f,
+            loupeWPx = 300f,
+            loupeHPx = 140f,
+            displayedWPx = 1080f,
+            padPx = 20f,
+            gapPx = 50f,
+            bottomFlipPx = 80f
+        )
+        // Horizontally centered: 500 - 150 = 350
+        assertEquals(350f, pos.x, 0.001f)
+        // Vertically above finger: 600 - 140 - 50 = 410
+        assertEquals(410f, pos.y, 0.001f)
+    }
+
+    @Test
+    fun testSelectionMagnifierLoupePositionLeftClamp() {
+        val pos = SelectionMagnifierHelper.calculateLoupePosition(
+            touchX = 50f,
+            touchY = 600f,
+            loupeWPx = 300f,
+            loupeHPx = 140f,
+            displayedWPx = 1080f,
+            padPx = 20f,
+            gapPx = 50f,
+            bottomFlipPx = 80f
+        )
+        // 50 - 150 = -100 -> clamped to padPx (20f)
+        assertEquals(20f, pos.x, 0.001f)
+        assertEquals(410f, pos.y, 0.001f)
+    }
+
+    @Test
+    fun testSelectionMagnifierLoupePositionRightClamp() {
+        val pos = SelectionMagnifierHelper.calculateLoupePosition(
+            touchX = 1050f,
+            touchY = 600f,
+            loupeWPx = 300f,
+            loupeHPx = 140f,
+            displayedWPx = 1080f,
+            padPx = 20f,
+            gapPx = 50f,
+            bottomFlipPx = 80f
+        )
+        // 1050 - 150 = 900 -> clamped to 1080 - 300 - 20 = 760f
+        assertEquals(760f, pos.x, 0.001f)
+        assertEquals(410f, pos.y, 0.001f)
+    }
+
+    @Test
+    fun testSelectionMagnifierLoupePositionTopFlip() {
+        val pos = SelectionMagnifierHelper.calculateLoupePosition(
+            touchX = 500f,
+            touchY = 100f,
+            loupeWPx = 300f,
+            loupeHPx = 140f,
+            displayedWPx = 1080f,
+            padPx = 20f,
+            gapPx = 50f,
+            bottomFlipPx = 80f
+        )
+        // 100 - 140 - 50 = -90 < 20f -> flips below finger: 100 + 80 = 180f
+        assertEquals(350f, pos.x, 0.001f)
+        assertEquals(180f, pos.y, 0.001f)
+    }
+
+    @Test
+    fun testSelectionMagnifierSourcePositionCentersOnTextLine() {
+        val words = listOf(
+            PdfWord(text = "First", left = 0.1f, top = 0.2f, right = 0.3f, bottom = 0.25f, lineIndex = 0, wordIndex = 0),
+            PdfWord(text = "Second", left = 0.35f, top = 0.2f, right = 0.6f, bottom = 0.25f, lineIndex = 0, wordIndex = 1)
+        )
+        val srcEnd = SelectionMagnifierHelper.calculateSourcePosition(
+            touchX = 400f,
+            targetYNorm = 0.22f,
+            displayedWPx = 1000f,
+            targetHPx = 1500f,
+            targetWords = words,
+            selectedWordIndex = 1
+        )
+        // sourceX follows touchX
+        assertEquals(400f, srcEnd.x, 0.001f)
+        // sourceY is pinned to line center: (0.2 + 0.25)/2 * 1500 = 0.225 * 1500 = 337.5f
+        assertEquals(337.5f, srcEnd.y, 0.001f)
+
+        val srcStart = SelectionMagnifierHelper.calculateSourcePosition(
+            touchX = 150f,
+            targetYNorm = 0.22f,
+            displayedWPx = 1000f,
+            targetHPx = 1500f,
+            targetWords = words,
+            selectedWordIndex = 0
+        )
+        assertEquals(150f, srcStart.x, 0.001f)
+        assertEquals(337.5f, srcStart.y, 0.001f)
     }
 }
