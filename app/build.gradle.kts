@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.pdfhelperreader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "4.2.0"
+        versionCode = 17
+        versionName = "4.3.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -35,6 +35,10 @@ android {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
         }
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     compileOptions {

@@ -26,7 +26,7 @@ class NumberedCanvas(canvas.Canvas):
         self.saveState()
         self.setFont("Helvetica", 9.5)
         self.setFillColor(colors.HexColor('#718096'))
-        page_text = f"PdfHelperReader v4.2.0 Manual  •  Page {self._pageNumber} of {page_count}"
+        page_text = f"PdfHelperReader v4.3.0 Manual  •  Page {self._pageNumber} of {page_count}"
         self.drawRightString(612 - 36, 20, page_text)
         self.restoreState()
 
@@ -120,7 +120,7 @@ def build_pdf(filename):
 
     # Title & Subtitle
     story.append(Paragraph("PdfHelperReader – Comprehensive User Manual", title_style))
-    story.append(Paragraph("(v4.2.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
+    story.append(Paragraph("(v4.3.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
 
     # Section 1
     story.append(Paragraph("1. Welcome & Introduction", h1_style))
@@ -173,8 +173,8 @@ def build_pdf(filename):
             Paragraph("<b>Page Sync</b>: Instantly jumps the Vocabulary pane to match your current Book page using the exact vocab_map array.", table_desc_style)
         ],
         [
-            Paragraph("G:Vocab / G:Google", table_btn_style),
-            Paragraph("<b>Vocab Mode & Preserved Search State</b>: Toggles lower pane between Vocabulary PDF sidecar and embedded Google Search. Automatically switches to Dual-Pane Split View with persistent layout and pre-warmed Chromium engine. Preserves browsing history and state when switching back and forth, and performs new searches on-demand.", table_desc_style)
+            Paragraph("G:Vocab / G:Google / G:Files", table_btn_style),
+            Paragraph("<b>Vocab Mode & Preserved Search/Browser State</b>: Cycles lower pane between Vocabulary PDF sidecar, embedded Google Search, and the docked File Browser. Automatically switches to Dual-Pane Split View with persistent layout and pre-warmed Chromium engine. Preserves browsing history and state when switching back and forth, and performs new searches on-demand.", table_desc_style)
         ],
         [
             Paragraph("T", table_btn_style),
@@ -199,6 +199,10 @@ def build_pdf(filename):
         [
             Paragraph("LOB", table_btn_style),
             Paragraph("<b>Load Online Book</b>: Opens dual-tab online library (35 GitHub CDN classics + official Project Gutenberg search engine for 70,000+ books with EPUB and PDF download options).", table_desc_style)
+        ],
+        [
+            Paragraph("Browse", table_btn_style),
+            Paragraph("<b>Built-in File Browser & Docking</b>: Scans all PDF and EPUB files across device storage. Features a right-edge sidebar with <b>Time</b> (most recently modified first) and <b>Name</b> (alphabetical A–Z) sorting, instant search filter, live scan status, and state persistence. Tap <b>Min/Max</b> to dock the browser seamlessly into the lower pane or restore to full screen; the docked view automatically closes when entering Zen Mode.", table_desc_style)
         ],
         [
             Paragraph("OB / OV / LV", table_btn_style),
@@ -322,6 +326,16 @@ def build_pdf(filename):
     story.append(Paragraph(
         "• <b>Precision Drag Selection</b>: Long-pressing on any word expands the selection to cover the entire word, while dragging the selection handles allows fine-grained, sub-word precision without rigid word snapping.<br/>"
         "• <b>Smart Search Query Formatting</b>: Initiating a Google search from selected text automatically crafts the search query: single words search <i>meaning of this: \"word\"</i>, while multi-word phrases search <i>meaning of this part by part: \"phrase\"</i>.",
+        body_style
+    ))
+
+    story.append(Paragraph("14. Built-in File Browser & System File Association", h1_style))
+    story.append(Paragraph(
+        "• <b>System \"Open With\" Chooser Integration</b>: Registered system intent filters allow tapping any PDF or EPUB file in external file managers, Downloads, messaging apps, and email attachments to open directly in PdfHelperReader.<br/>"
+        "• <b>Device Storage Scanner</b>: Tapping the <b>Browse</b> button in the ribbon scans device storage for PDF and EPUB files with real-time status and manual refresh.<br/>"
+        "• <b>Sidebar Sorting & State Memory</b>: The right sidebar lets you switch instantly between <b>Time</b> (most recently modified first) and <b>Name</b> (A–Z). Sorting preferences and exact list scroll positions are permanently remembered across app launches.<br/>"
+        "• <b>Min/Max Split Docking</b>: Tapping <b>Min/Max</b> at the bottom of the sidebar docks the browser into the lower split pane so you can browse books while reading in the upper pane. Min mode displays only the clean book list and right-edge sidebar with theme-protected surface colors.<br/>"
+        "• <b>Automatic Zen Mode Dismissal</b>: Entering Zen Mode automatically closes any open or docked browser, ensuring an undisturbed distraction-free reading experience.",
         body_style
     ))
 

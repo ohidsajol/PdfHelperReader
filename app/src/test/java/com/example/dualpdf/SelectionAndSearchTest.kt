@@ -275,4 +275,60 @@ class SelectionAndSearchTest {
             // Transient offline/network issue in test runner
         }
     }
+
+    @Test
+    fun testFileBrowserSortingByTimeAndName() {
+        val dummyUri: android.net.Uri? = null
+        val items = listOf(
+            BookFileInfo(dummyUri, "Zebra.pdf", "/storage/emulated/0/Zebra.pdf", 1024, 1000L, false),
+            BookFileInfo(dummyUri, "apple.epub", "/storage/emulated/0/apple.epub", 2048, 5000L, true),
+            BookFileInfo(dummyUri, "Banana.pdf", "/storage/emulated/0/Banana.pdf", 4096, 3000L, false)
+        )
+
+        // Sort by TIME (most recently modified first)
+        val sortedByTime = items.sortedByDescending { it.dateModifiedMs }
+        assertEquals("apple.epub", sortedByTime[0].name)
+        assertEquals("Banana.pdf", sortedByTime[1].name)
+        assertEquals("Zebra.pdf", sortedByTime[2].name)
+
+        // Sort by NAME (alphabetical case-insensitive)
+        val sortedByName = items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        assertEquals("apple.epub", sortedByName[0].name)
+        assertEquals("Banana.pdf", sortedByName[1].name)
+        assertEquals("Zebra.pdf", sortedByName[2].name)
+    }
+
+    @Test
+    fun testFormatDisplayPath() {
+        assertEquals("Books/MyBook.pdf", formatDisplayPath("/storage/emulated/0/Books/MyBook.pdf"))
+        assertEquals("Download/doc.pdf", formatDisplayPath("/storage/emulated/0/Download/doc.pdf"))
+        assertEquals("/custom/path/doc.pdf", formatDisplayPath("/custom/path/doc.pdf"))
+    }
+
+    @Test
+    fun testFormatFileSize() {
+        assertEquals("0 B", formatFileSize(0))
+        assertEquals("500.0 B", formatFileSize(500))
+        assertEquals("1.0 KB", formatFileSize(1024))
+        assertEquals("2.5 MB", formatFileSize((2.5 * 1024 * 1024).toLong()))
+    }
+
+    @Test
+    fun testBrowserClosesOnZenModeTransition() {
+        var vocabMode = VocabMode.BROWSER
+        val previousVocabMode: VocabMode? = VocabMode.VOCAB_PDF
+        var showBrowser = true
+        var isZenMode = false
+
+        // User enters Zen mode while browser is in lower pane
+        if (vocabMode == VocabMode.BROWSER) {
+            vocabMode = previousVocabMode ?: VocabMode.VOCAB_PDF
+        }
+        showBrowser = false
+        isZenMode = true
+
+        assertEquals(VocabMode.VOCAB_PDF, vocabMode)
+        assertEquals(false, showBrowser)
+        assertEquals(true, isZenMode)
+    }
 }

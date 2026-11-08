@@ -1,4 +1,4 @@
-# PdfHelperReader (v4.2.0)
+# PdfHelperReader (v4.3.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -6,6 +6,21 @@
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
 **PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
+
+---
+
+## 🌟 What's New in v4.3.0
+
+### 📁 Built-in Storage File Browser & Lower-Pane Docking (`Browse` Button)
+* **Comprehensive Storage Scanning**: Scans internal device storage, Downloads, Documents, and Books directories for all `.pdf` and `.epub` documents with live status and manual re-scan.
+* **Right-Edge Sorting Sidebar**: Instantly sort by **Time** (most recently modified first) or **Name** (alphabetical A–Z). Active sorting mode and exact scroll positions are remembered permanently across app restarts.
+* **Min/Max Split Docking**: Tap **Min/Max** at the bottom of the sidebar to dock the file manager into the lower split pane for quick browsing while keeping your book visible, or expand it back to full screen.
+* **Theme-Locked Surface Background**: Min mode maintains a consistent, theme-protected surface background color that does not invert or flash when toggling the reader's dark theme (`T`).
+* **Automatic Zen Mode Dismissal**: Entering Zen Mode automatically closes the docked lower pane browser, maintaining a completely distraction-free reading space.
+
+### 📱 System "Open With" File Association
+* **System Chooser Integration**: Registered system-wide intent filters allow opening any `.pdf` or `.epub` file directly from Android file managers, Downloads, messaging apps, and email clients directly into PdfHelperReader.
+* **Seamless Launch & Running Handlers**: Automatically handles incoming document intents whether launching freshly or switching while already running in memory.
 
 ---
 
@@ -117,7 +132,7 @@
 
 ## 📦 Download & Installation
 Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
-* **[PdfHelperReader-v4.2.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.2.0/PdfHelperReader-v4.2.0.apk)**
+* **[PdfHelperReader-v4.3.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.3.0/PdfHelperReader-v4.3.0.apk)**
 
 To build from source:
 ```bash

@@ -13,7 +13,15 @@ import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.content.ContentUris
+import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -496,7 +504,8 @@ enum class ViewMode {
 
 enum class VocabMode {
     VOCAB_PDF,
-    GOOGLE_WEB
+    GOOGLE_WEB,
+    BROWSER
 }
 
 class Pane {
@@ -591,6 +600,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     val book = Pane()
     val vocab = Pane()
     var vocabMode by mutableStateOf(VocabMode.VOCAB_PDF)
+    var previousVocabMode by mutableStateOf<VocabMode?>(null)
     var googleSearchQuery by mutableStateOf("https://www.google.com")
         private set
     var googleRawQuery by mutableStateOf("")
@@ -675,6 +685,14 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     val searchHistory = mutableStateListOf<SearchHistoryEntry>()
     var historyTab by mutableStateOf(0)
     var ribbonScrollOffset by mutableStateOf(0)
+    var browserSortMode by mutableStateOf(BrowserSortMode.TIME)
+    var browserScrollIndex by mutableIntStateOf(0)
+    var browserScrollOffset by mutableIntStateOf(0)
+    var browserSearchQuery by mutableStateOf("")
+    var browserFiles by mutableStateOf<List<BookFileInfo>>(emptyList())
+    var isScanningBrowserFiles by mutableStateOf(false)
+    var browserHasScanned by mutableStateOf(false)
+    var closeDialogsRequest by mutableIntStateOf(0)
 
     var activeSelection: TextSelection?
         get() = book.activeSelection ?: vocab.activeSelection
@@ -1039,6 +1057,63 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         ribbonScrollOffset = getIntPref("ribbon_scroll_offset", 0)
     }
 
+    fun loadBrowserState() {
+        val sortStr = prefs.getString("browser_sort_mode", BrowserSortMode.TIME.name)
+        browserSortMode = try {
+            BrowserSortMode.valueOf(sortStr ?: BrowserSortMode.TIME.name)
+        } catch (_: Exception) {
+            BrowserSortMode.TIME
+        }
+        browserScrollIndex = getIntPref("browser_scroll_index", 0)
+        browserScrollOffset = getIntPref("browser_scroll_offset", 0)
+    }
+
+    fun saveBrowserScrollState(index: Int, offset: Int) {
+        browserScrollIndex = index
+        browserScrollOffset = offset
+        editPrefs {
+            putInt("browser_scroll_index", index)
+            putInt("browser_scroll_offset", offset)
+        }
+    }
+
+    fun updateBrowserSortMode(mode: BrowserSortMode) {
+        if (browserSortMode == mode) return
+        browserSortMode = mode
+        editPrefs { putString("browser_sort_mode", mode.name) }
+        browserFiles = sortFileList(browserFiles, mode)
+        saveBrowserScrollState(0, 0)
+    }
+
+    fun scanBrowserFiles(force: Boolean = false) {
+        if (isScanningBrowserFiles) return
+        if (browserHasScanned && !force) return
+        isScanningBrowserFiles = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val rawList = scanDeviceBookFiles(ctx)
+                val sorted = sortFileList(rawList, browserSortMode)
+                withContext(Dispatchers.Main) {
+                    browserFiles = sorted
+                    browserHasScanned = true
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isScanningBrowserFiles = false
+                }
+            }
+        }
+    }
+
+    fun sortFileList(list: List<BookFileInfo>, mode: BrowserSortMode): List<BookFileInfo> {
+        return when (mode) {
+            BrowserSortMode.TIME -> list.sortedByDescending { it.dateModifiedMs }
+            BrowserSortMode.NAME -> list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        }
+    }
+
     fun syncFromDiskAndRestore() {
         cleanStorageDirectoryIfExceedsLimit()
         syncFromDisk()
@@ -1048,6 +1123,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadHistory()
         loadSearchHistory()
         loadRibbonAndHistoryTabState()
+        loadBrowserState()
 
         val lastBook = prefs.getString("last_book_uri", null)
         if (!lastBook.isNullOrBlank() && book.doc == null) {
@@ -1056,7 +1132,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     /** Reopen whatever was open last time. */
-    fun restore() {
+    fun restore(initialBookUri: Uri? = null) {
         syncFromDisk()
         isDarkMode = getBoolPref("is_dark_mode", false)
         
@@ -1065,8 +1141,14 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadHistory()
         loadSearchHistory()
         loadRibbonAndHistoryTabState()
+        loadBrowserState()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v17", false)
+        if (initialBookUri != null) {
+            onBookPicked(initialBookUri)
+            return
+        }
+        
+        val defaultExtracted = getBoolPref("default_book_extracted_v18", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -1074,7 +1156,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v17", true) }
+                editPrefs { putBoolean("default_book_extracted_v18", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -1118,6 +1200,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     fun onBookPicked(uri: Uri, name: String? = null) {
         val resolved = resolveFileUri(uri, name)
         persist(resolved)
+        closeDialogsRequest++
         openBook(resolved)
     }
 
@@ -1689,13 +1772,36 @@ class MainActivity : ComponentActivity() {
         reader.syncFromDiskAndRestore()
     }
 
+    private fun getIncomingFileUri(intent: Intent?): Uri? {
+        if (intent == null) return null
+        val action = intent.action
+        if (action == Intent.ACTION_VIEW || action == Intent.ACTION_EDIT) {
+            if (intent.data != null) return intent.data
+            val clipData = intent.clipData
+            if (clipData != null && clipData.itemCount > 0) {
+                return clipData.getItemAt(0).uri
+            }
+        }
+        return null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        getIncomingFileUri(intent)?.let { uri ->
+            reader.onBookPicked(uri)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         reader = Reader(applicationContext, scope)
-        reader.restore()
+        val incomingUri = getIncomingFileUri(intent)
+        reader.restore(initialBookUri = incomingUri)
         checkPermissions()
         scope.launch(Dispatchers.IO) {
             VocabGenerator.init(applicationContext)
+            reader.scanBrowserFiles()
         }
         scope.launch(Dispatchers.Main) {
             kotlinx.coroutines.delay(1200)
@@ -1973,7 +2079,37 @@ fun ReaderScreen(reader: Reader) {
             reader.saveRibbonScrollOffset(ribbonScrollState.value)
         }
     }
+    var showBrowser by remember { mutableStateOf(false) }
+    val browserListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = reader.browserScrollIndex,
+        initialFirstVisibleItemScrollOffset = reader.browserScrollOffset
+    )
+
+    LaunchedEffect(browserListState.firstVisibleItemIndex, browserListState.firstVisibleItemScrollOffset) {
+        if (showBrowser) {
+            reader.saveBrowserScrollState(browserListState.firstVisibleItemIndex, browserListState.firstVisibleItemScrollOffset)
+        }
+    }
+
+    LaunchedEffect(showBrowser) {
+        if (showBrowser && reader.browserScrollIndex > 0) {
+            if (browserListState.firstVisibleItemIndex != reader.browserScrollIndex) {
+                browserListState.scrollToItem(reader.browserScrollIndex, reader.browserScrollOffset)
+            }
+        }
+    }
+
     var showLobDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(reader.closeDialogsRequest) {
+        if (reader.closeDialogsRequest > 0) {
+            showBrowser = false
+            showHistory = false
+            showBookmarks = false
+            showHighlights = false
+            showLobDialog = false
+        }
+    }
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var isDownloadingLob by remember { mutableStateOf(false) }
     var downloadingBookTitle by remember { mutableStateOf("") }
@@ -2063,6 +2199,10 @@ fun ReaderScreen(reader: Reader) {
         if (isZenMode) {
             isZenMode = false
         } else {
+            if (reader.vocabMode == VocabMode.BROWSER) {
+                reader.vocabMode = reader.previousVocabMode ?: VocabMode.VOCAB_PDF
+            }
+            showBrowser = false
             isZenMode = true
             showZenControls = false
         }
@@ -2070,6 +2210,12 @@ fun ReaderScreen(reader: Reader) {
 
     val window = (ctx as? Activity)?.window
     LaunchedEffect(isZenMode) {
+        if (isZenMode) {
+            if (reader.vocabMode == VocabMode.BROWSER) {
+                reader.vocabMode = reader.previousVocabMode ?: VocabMode.VOCAB_PDF
+            }
+            showBrowser = false
+        }
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
             if (isZenMode) {
@@ -2238,7 +2384,9 @@ fun ReaderScreen(reader: Reader) {
                         onGenerateVocab = generateVocabAction,
                         onCancelVocab = { reader.cancelVocab(); isGenerating = false },
                         bookListState = bookListState,
-                        vocabListState = vocabListState
+                        vocabListState = vocabListState,
+                        browserListState = browserListState,
+                        onOpenFullBrowser = { showBrowser = true }
                     )
                 }
 
@@ -2984,6 +3132,27 @@ fun ReaderScreen(reader: Reader) {
             )
         }
 
+        if (showBrowser) {
+            FileBrowserDialog(
+                reader = reader,
+                listState = browserListState,
+                onToggleMinMax = {
+                    showBrowser = false
+                    reader.previousVocabMode = reader.vocabMode
+                    reader.vocabMode = VocabMode.BROWSER
+                    if (splitMode != SplitMode.SPLIT_BOTH) {
+                        splitMode = SplitMode.SPLIT_BOTH
+                    }
+                },
+                onDismiss = { showBrowser = false },
+                onFileSelected = { file ->
+                    val targetUri = file.uri ?: Uri.fromFile(File(file.path))
+                    reader.onBookPicked(targetUri, file.name)
+                    showBrowser = false
+                }
+            )
+        }
+
         val startOcr: (Boolean) -> Unit = { force ->
             isOcrGenerating = true
             ocrProgressCurrent = 0
@@ -3183,6 +3352,10 @@ fun ReaderScreen(reader: Reader) {
 
                     RibbonBtn(
                         onClick = {
+                            if (reader.vocabMode == VocabMode.BROWSER) {
+                                reader.vocabMode = reader.previousVocabMode ?: VocabMode.VOCAB_PDF
+                            }
+                            showBrowser = false
                             isZenMode = true
                             showZenControls = true
                         },
@@ -3261,6 +3434,9 @@ fun ReaderScreen(reader: Reader) {
                                     isSyncedReading = false
                                     VocabMode.VOCAB_PDF
                                 }
+                                VocabMode.BROWSER -> {
+                                    VocabMode.VOCAB_PDF
+                                }
                             }
                             if (reader.vocabMode == VocabMode.GOOGLE_WEB) {
                                 isSyncedReading = false
@@ -3269,6 +3445,7 @@ fun ReaderScreen(reader: Reader) {
                         text = when (reader.vocabMode) {
                             VocabMode.VOCAB_PDF -> "G:Vocab"
                             VocabMode.GOOGLE_WEB -> "G:Google"
+                            VocabMode.BROWSER -> "G:Files"
                         }
                     )
 
@@ -3340,6 +3517,21 @@ fun ReaderScreen(reader: Reader) {
                     RibbonBtn(
                         onClick = { showLobDialog = true },
                         text = "LOB"
+                    )
+
+                    RibbonBtn(
+                        onClick = {
+                            if (reader.vocabMode == VocabMode.BROWSER) {
+                                reader.vocabMode = reader.previousVocabMode ?: VocabMode.VOCAB_PDF
+                                showBrowser = true
+                            } else {
+                                showBrowser = true
+                                if (!reader.browserHasScanned) {
+                                    reader.scanBrowserFiles()
+                                }
+                            }
+                        },
+                        text = "Browse"
                     )
 
                     RibbonBtn(
@@ -3426,7 +3618,9 @@ fun ReaderScreen(reader: Reader) {
                     onGenerateVocab = generateVocabAction,
                     onCancelVocab = { reader.cancelVocab(); isGenerating = false },
                     bookListState = bookListState,
-                    vocabListState = vocabListState
+                    vocabListState = vocabListState,
+                    browserListState = browserListState,
+                    onOpenFullBrowser = { showBrowser = true }
                 )
             }
 
@@ -3533,7 +3727,9 @@ fun DocumentPanesLayout(
     onGenerateVocab: () -> Unit,
     onCancelVocab: () -> Unit,
     bookListState: androidx.compose.foundation.lazy.LazyListState? = null,
-    vocabListState: androidx.compose.foundation.lazy.LazyListState? = null
+    vocabListState: androidx.compose.foundation.lazy.LazyListState? = null,
+    browserListState: androidx.compose.foundation.lazy.LazyListState? = null,
+    onOpenFullBrowser: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
 
@@ -3640,7 +3836,8 @@ fun DocumentPanesLayout(
                     onToggleSplitMode,
                     onSetSplitMode,
                     emptyVocabCard,
-                    externalListState = vocabListState
+                    externalListState = if (reader.vocabMode == VocabMode.BROWSER) browserListState else vocabListState,
+                    onOpenFullBrowser = onOpenFullBrowser
                 )
             }
         }
@@ -3686,7 +3883,8 @@ fun DocumentPanesLayout(
                     onToggleSplitMode,
                     onSetSplitMode,
                     emptyVocabCard,
-                    externalListState = vocabListState
+                    externalListState = if (reader.vocabMode == VocabMode.BROWSER) browserListState else vocabListState,
+                    onOpenFullBrowser = onOpenFullBrowser
                 )
             }
         }
@@ -3710,7 +3908,8 @@ fun PdfPane(
     onToggleSplitMode: () -> Unit = {},
     onSetSplitMode: (SplitMode) -> Unit = {},
     empty: @Composable () -> Unit,
-    externalListState: androidx.compose.foundation.lazy.LazyListState? = null
+    externalListState: androidx.compose.foundation.lazy.LazyListState? = null,
+    onOpenFullBrowser: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
     var showPageDialog by remember { mutableStateOf(false) }
@@ -3723,14 +3922,22 @@ fun PdfPane(
 
     Column(modifier) {
         val isGoogleWebInVocab = (label == "VOCAB" && reader.vocabMode == VocabMode.GOOGLE_WEB)
-        if (!isZenMode && !isGoogleWebInVocab) {
+        val isBrowserInVocab = (label == "VOCAB" && reader.vocabMode == VocabMode.BROWSER)
+        if (!isZenMode && !isGoogleWebInVocab && !isBrowserInVocab) {
             PaneBar(label, pane, onPage)
+        }
+        val boxBg = if (isBrowserInVocab) {
+            MaterialTheme.colorScheme.surface
+        } else if (isDarkMode) {
+            androidx.compose.ui.graphics.Color(0xFF1E1E1E)
+        } else {
+            androidx.compose.ui.graphics.Color(0xFFF5F5F5)
         }
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(if (isDarkMode) androidx.compose.ui.graphics.Color(0xFF1E1E1E) else androidx.compose.ui.graphics.Color(0xFFF5F5F5))
+                .background(boxBg)
                 .pointerInput(isZenMode) {
                     detectMultiTapGestures(
                         onDoubleTap = if (isZenMode) { { onToggleZenControls() } } else null,
@@ -3746,6 +3953,22 @@ fun PdfPane(
                     searchToken = reader.googleSearchToken,
                     isDarkMode = isDarkMode,
                     onBackToVocab = { reader.vocabMode = VocabMode.VOCAB_PDF }
+                )
+            } else if (isBrowserInVocab) {
+                FileBrowserContent(
+                    reader = reader,
+                    listState = externalListState ?: rememberLazyListState(),
+                    isMinMode = true,
+                    onToggleMinMax = {
+                        reader.vocabMode = reader.previousVocabMode ?: VocabMode.VOCAB_PDF
+                        onOpenFullBrowser()
+                    },
+                    onDismiss = {},
+                    onFileSelected = { file ->
+                        val targetUri = file.uri ?: Uri.fromFile(File(file.path))
+                        reader.onBookPicked(targetUri, file.name)
+                    },
+                    modifier = Modifier.fillMaxSize()
                 )
             } else {
                 val doc = pane.doc
@@ -6047,5 +6270,618 @@ class AppTextToolbar : TextToolbar {
         onSelectAllRequested: (() -> Unit)?
     ) {
         toolbarInfo = SelectionToolbarInfo(rect, onCopyRequested, onSelectAllRequested)
+    }
+}
+
+/* =========================================================================
+ *  Built-in File Manager / Browser
+ * ========================================================================= */
+
+enum class BrowserSortMode {
+    TIME,
+    NAME
+}
+
+data class BookFileInfo(
+    val uri: Uri?,
+    val name: String,
+    val path: String,
+    val size: Long,
+    val dateModifiedMs: Long,
+    val isEpub: Boolean
+)
+
+fun scanDeviceBookFiles(ctx: Context): List<BookFileInfo> {
+    val result = mutableListOf<BookFileInfo>()
+    val seenPaths = HashSet<String>()
+
+    try {
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.DATA,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.MIME_TYPE
+        )
+
+        val selection = "(${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf' OR " +
+                "${MediaStore.Files.FileColumns.DATA} LIKE '%.epub' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.pdf' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.epub' OR " +
+                "${MediaStore.Files.FileColumns.MIME_TYPE} = 'application/pdf' OR " +
+                "${MediaStore.Files.FileColumns.MIME_TYPE} = 'application/epub+zip')"
+
+        ctx.contentResolver.query(
+            MediaStore.Files.getContentUri("external"),
+            projection,
+            selection,
+            null,
+            null
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndex(MediaStore.Files.FileColumns._ID)
+            val nameCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val dataCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+            val sizeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            val dateCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val mimeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+
+            while (cursor.moveToNext()) {
+                val id = if (idCol >= 0) cursor.getLong(idCol) else -1L
+                val data = if (dataCol >= 0) cursor.getString(dataCol) else null
+                val displayName = if (nameCol >= 0) cursor.getString(nameCol) else null
+                val size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
+                val dateSec = if (dateCol >= 0) cursor.getLong(dateCol) else 0L
+                val mime = if (mimeCol >= 0) cursor.getString(mimeCol) else null
+
+                val name = displayName ?: data?.substringAfterLast('/') ?: "Unknown"
+                if (name.startsWith(".")) continue
+                val lowerName = name.lowercase()
+                val isEpub = lowerName.endsWith(".epub") || (mime?.contains("epub", ignoreCase = true) == true)
+                val isPdf = lowerName.endsWith(".pdf") || (mime?.contains("pdf", ignoreCase = true) == true)
+                if (!isPdf && !isEpub) continue
+
+                var fileObj: File? = null
+                if (!data.isNullOrBlank()) {
+                    val f = File(data)
+                    if (f.exists()) {
+                        if (seenPaths.contains(f.absolutePath)) continue
+                        seenPaths.add(f.absolutePath)
+                        fileObj = f
+                    }
+                }
+
+                val uri = if (fileObj != null) {
+                    Uri.fromFile(fileObj)
+                } else if (id >= 0) {
+                    ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id)
+                } else {
+                    continue
+                }
+
+                val pathStr = fileObj?.absolutePath ?: data ?: name
+                val fileSize = if (fileObj != null && fileObj.length() > 0) fileObj.length() else size
+                val timeMs = if (fileObj != null && fileObj.lastModified() > 0) {
+                    fileObj.lastModified()
+                } else if (dateSec > 0) {
+                    dateSec * 1000L
+                } else 0L
+
+                result.add(
+                    BookFileInfo(
+                        uri = uri,
+                        name = name,
+                        path = pathStr,
+                        size = fileSize,
+                        dateModifiedMs = timeMs,
+                        isEpub = isEpub
+                    )
+                )
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    try {
+        val commonDirs = listOf(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PdfHelperReader_files"),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+            File(Environment.getExternalStorageDirectory(), "Books")
+        )
+
+        for (dir in commonDirs) {
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { f ->
+                    if (f.isFile && !f.name.startsWith(".") && f.length() > 0) {
+                        val lower = f.name.lowercase()
+                        val isPdf = lower.endsWith(".pdf")
+                        val isEpub = lower.endsWith(".epub")
+                        if ((isPdf || isEpub) && !seenPaths.contains(f.absolutePath)) {
+                            seenPaths.add(f.absolutePath)
+                            result.add(
+                                BookFileInfo(
+                                    uri = Uri.fromFile(f),
+                                    name = f.name,
+                                    path = f.absolutePath,
+                                    size = f.length(),
+                                    dateModifiedMs = f.lastModified(),
+                                    isEpub = isEpub
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+    return result
+}
+
+fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt().coerceIn(0, units.size - 1)
+    val value = bytes / Math.pow(1024.0, digitGroups.toDouble())
+    return String.format(Locale.getDefault(), "%.1f %s", value, units[digitGroups])
+}
+
+fun formatFileDate(timeMs: Long): String {
+    if (timeMs <= 0) return ""
+    val sdf = SimpleDateFormat("MMM dd, yyyy · HH:mm", Locale.getDefault())
+    return sdf.format(Date(timeMs))
+}
+
+fun formatDisplayPath(path: String): String {
+    val prefix = "/storage/emulated/0/"
+    return if (path.startsWith(prefix)) {
+        path.removePrefix(prefix)
+    } else {
+        path
+    }
+}
+
+@Composable
+fun FileBrowserDialog(
+    reader: Reader,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    onToggleMinMax: () -> Unit,
+    onDismiss: () -> Unit,
+    onFileSelected: (BookFileInfo) -> Unit
+) {
+    BackHandler(onBack = onDismiss)
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp, vertical = 16.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            FileBrowserContent(
+                reader = reader,
+                listState = listState,
+                isMinMode = false,
+                onToggleMinMax = onToggleMinMax,
+                onDismiss = onDismiss,
+                onFileSelected = onFileSelected,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+fun FileBrowserContent(
+    reader: Reader,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    isMinMode: Boolean,
+    onToggleMinMax: () -> Unit,
+    onDismiss: () -> Unit = {},
+    onFileSelected: (BookFileInfo) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var searchQuery by remember { mutableStateOf(reader.browserSearchQuery) }
+    val allFiles = reader.browserFiles
+    val sortMode = reader.browserSortMode
+
+    val displayedFiles = remember(allFiles, searchQuery, isMinMode) {
+        if (isMinMode || searchQuery.isBlank()) {
+            allFiles
+        } else {
+            val q = searchQuery.trim().lowercase()
+            allFiles.filter { it.name.lowercase().contains(q) || it.path.lowercase().contains(q) }
+        }
+    }
+
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surface,
+        shape = if (isMinMode) androidx.compose.ui.graphics.RectangleShape else RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+        if (!isMinMode) {
+            // Header
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Browse Files",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (reader.isScanningBrowserFiles) {
+                                Spacer(Modifier.width(8.dp))
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (reader.isScanningBrowserFiles) "Scanning device..." else "${displayedFiles.size} of ${allFiles.size} books",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = { reader.scanBrowserFiles(force = true) },
+                            enabled = !reader.isScanningBrowserFiles
+                        ) {
+                            Text("Refresh")
+                        }
+                        TextButton(onClick = onDismiss) {
+                            Text("Close", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = {
+                        searchQuery = it
+                        reader.browserSearchQuery = it
+                    },
+                    placeholder = { Text("Search title or folder...", fontSize = 14.sp) },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            TextButton(onClick = {
+                                searchQuery = ""
+                                reader.browserSearchQuery = ""
+                            }) {
+                                Text("✕", fontSize = 16.sp)
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(10.dp)
+                )
+            }
+
+            HorizontalDivider()
+        }
+
+        // Content Row: File List on Left + Sidebar on Right Edge
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            // Left area: File List
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                if (displayedFiles.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (reader.isScanningBrowserFiles) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(12.dp))
+                                Text("Scanning storage for PDF & EPUB files...")
+                            }
+                        } else if (!isMinMode && searchQuery.isNotEmpty()) {
+                            Text("No files match \"$searchQuery\"")
+                        } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("No PDF or EPUB files found.")
+                                Spacer(Modifier.height(8.dp))
+                                TextButton(onClick = { reader.scanBrowserFiles(force = true) }) {
+                                    Text("Scan Again")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        items(
+                            items = displayedFiles,
+                            key = { it.path }
+                        ) { file ->
+                            BrowserFileItem(
+                                file = file,
+                                onClick = { onFileSelected(file) }
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 3.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            VerticalDivider(
+                modifier = Modifier.fillMaxHeight(),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+            )
+
+            // Right Edge: Sidebar with "Time", "Name", and "Min/Max" button
+            Surface(
+                modifier = Modifier
+                    .width(68.dp)
+                    .fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "SORT",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(Modifier.height(10.dp))
+
+                        // "Time" Option
+                        SidebarSortCard(
+                            title = "Time",
+                            subtitle = "Recent",
+                            isSelected = sortMode == BrowserSortMode.TIME,
+                            onClick = {
+                                if (sortMode != BrowserSortMode.TIME) {
+                                    reader.updateBrowserSortMode(BrowserSortMode.TIME)
+                                }
+                            }
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // "Name" Option
+                        SidebarSortCard(
+                            title = "Name",
+                            subtitle = "A - Z",
+                            isSelected = sortMode == BrowserSortMode.NAME,
+                            onClick = {
+                                if (sortMode != BrowserSortMode.NAME) {
+                                    reader.updateBrowserSortMode(BrowserSortMode.NAME)
+                                }
+                            }
+                        )
+                    }
+
+                    // "Min/Max" button at the bottom of the right edge
+                    SidebarMinMaxButton(
+                        isMinMode = isMinMode,
+                        onClick = onToggleMinMax
+                    )
+                }
+            }
+        }
+    }
+}
+}
+
+@Composable
+fun SidebarMinMaxButton(
+    isMinMode: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Min/Max",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1
+            )
+            Spacer(Modifier.height(1.dp))
+            Text(
+                text = if (isMinMode) "Max" else "Min",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+fun SidebarSortCard(
+    title: String,
+    subtitle: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+        border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}
+
+@Composable
+fun BrowserFileItem(
+    file: BookFileInfo,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 7.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = if (file.isEpub) {
+                MaterialTheme.colorScheme.tertiaryContainer
+            } else {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+            },
+            modifier = Modifier
+                .width(42.dp)
+                .height(32.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = if (file.isEpub) "EPUB" else "PDF",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (file.isEpub) {
+                        MaterialTheme.colorScheme.onTertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    }
+                )
+            }
+        }
+
+        Spacer(Modifier.width(10.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = file.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            val displayPath = formatDisplayPath(file.path)
+            if (displayPath.isNotEmpty() && displayPath != file.name) {
+                Text(
+                    text = displayPath,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(1.dp))
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = formatFileSize(file.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+                val dateStr = formatFileDate(file.dateModifiedMs)
+                if (dateStr.isNotEmpty()) {
+                    Text(
+                        text = "·",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = dateStr,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        }
     }
 }
