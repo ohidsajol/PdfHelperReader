@@ -38,7 +38,8 @@ data class PosEntry(
 
 data class WordEntry(
     val pos: List<PosEntry>,
-    val score: Float? = null
+    val score: Float? = null,
+    val reference: String? = null
 )
 
 data class VocabResult(
@@ -53,6 +54,11 @@ object VocabGenerator {
     private val gson = Gson()
     private var initialized = false
     private val initMutex = Mutex()
+
+    fun initForTest(map: Map<String, String>) {
+        dictionary = map
+        initialized = true
+    }
 
     suspend fun init(ctx: Context) = withContext(Dispatchers.IO) {
         if (initialized) return@withContext
@@ -194,8 +200,9 @@ object VocabGenerator {
         val raw = dictionary[wLower] ?: return null
 
         if (raw.startsWith("\$#\$")) {
-            val ref = raw.removePrefix("\$#\$").trim().lowercase()
-            val refClean = ref.split(",", "|", "under").firstOrNull()?.trim() ?: ref
+            val ref = raw.removePrefix("\$#\$").trim()
+            val refLower = ref.lowercase()
+            val refClean = refLower.split(",", "|", "under").firstOrNull()?.trim() ?: refLower
             val refNormalized = refClean.replace("æ", "e").replace("œ", "e")
 
             var entry = lookupEntry(refClean, visited)
@@ -206,9 +213,11 @@ object VocabGenerator {
                 entry = lookupEntry("m" + refClean.substring(1), visited)
             }
             if (entry == null) {
-                entry = lookupEntry(ref, visited)
+                entry = lookupEntry(refLower, visited)
             }
-            return entry
+            return entry?.let {
+                if (it.reference == null) it.copy(reference = ref) else it
+            }
         }
 
         return try {
@@ -262,7 +271,10 @@ object VocabGenerator {
 
         for (cand in candidates) {
             entry = lookupEntry(cand)
-            if (entry != null) return cand to entry
+            if (entry != null) {
+                val ref = entry.reference ?: cand
+                return cand to entry.copy(reference = ref)
+            }
         }
 
         return null
@@ -278,23 +290,17 @@ object VocabGenerator {
         val score: Float?,
         val definitions: List<DefinitionItem>,
         val synonyms: List<String>,
-        val antonyms: List<String>
+        val antonyms: List<String>,
+        val reference: String? = null,
+        val isOnline: Boolean = false
     )
 
     fun lookupSynonymsAndAntonyms(query: String): WordSummary? {
         val clean = query.trim().trim { !it.isLetterOrDigit() && it != '-' }
         if (clean.isBlank()) return null
+        if (clean.contains(' ')) return null
 
-        var match = lookupWithLemmatizationResult(clean)
-
-        if (match == null && clean.contains(' ')) {
-            val first = clean.split(Regex("\\s+")).firstOrNull()?.trim { !it.isLetterOrDigit() && it != '-' } ?: ""
-            if (first.length >= 2) {
-                match = lookupWithLemmatizationResult(first)
-            }
-        }
-
-        if (match == null) return null
+        val match = lookupWithLemmatizationResult(clean) ?: return null
         val matchedWord = match.first
         val entry = match.second
         val defs = entry.pos.mapNotNull { pos ->
@@ -311,8 +317,114 @@ object VocabGenerator {
             score = entry.score,
             definitions = defs,
             synonyms = syns,
-            antonyms = ants
+            antonyms = ants,
+            reference = entry.reference
         )
+    }
+
+    private val onlineCache = java.util.concurrent.ConcurrentHashMap<String, WordSummary>()
+
+    fun lookupOnlineDictionary(query: String): WordSummary? {
+        val clean = query.trim().trim { !it.isLetterOrDigit() && it != '-' }
+        if (clean.isBlank()) return null
+        if (clean.contains(' ')) return null
+        val lower = clean.lowercase()
+
+        if (onlineCache.containsKey(lower)) {
+            return onlineCache[lower]
+        }
+
+        val result = try {
+            val url = java.net.URL("https://api.dictionaryapi.dev/api/v2/entries/en/${java.net.URLEncoder.encode(lower, "UTF-8")}")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 3500
+            conn.readTimeout = 3500
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            if (conn.responseCode != 200) {
+                null
+            } else {
+                val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                val element = JsonParser.parseString(jsonStr)
+                if (!element.isJsonArray) {
+                    null
+                } else {
+                    val jsonArray = element.asJsonArray
+                    if (jsonArray.size() == 0) {
+                        null
+                    } else {
+                        val firstEntry = jsonArray.get(0).asJsonObject
+                        val word = firstEntry.get("word")?.asString ?: clean
+
+                        val defs = mutableListOf<DefinitionItem>()
+                        val syns = mutableListOf<String>()
+                        val ants = mutableListOf<String>()
+
+                        val meanings = firstEntry.getAsJsonArray("meanings")
+                        if (meanings != null) {
+                            for (mElement in meanings) {
+                                if (!mElement.isJsonObject) continue
+                                val mObj = mElement.asJsonObject
+                                val pos = mObj.get("partOfSpeech")?.asString ?: ""
+
+                                mObj.getAsJsonArray("synonyms")?.forEach { s ->
+                                    val text = s.asString.trim()
+                                    if (text.isNotBlank()) syns.add(text)
+                                }
+                                mObj.getAsJsonArray("antonyms")?.forEach { a ->
+                                    val text = a.asString.trim()
+                                    if (text.isNotBlank()) ants.add(text)
+                                }
+
+                                val defArray = mObj.getAsJsonArray("definitions")
+                                if (defArray != null) {
+                                    for (dElement in defArray) {
+                                        if (!dElement.isJsonObject) continue
+                                        val dObj = dElement.asJsonObject
+                                        val dText = dObj.get("definition")?.asString?.trim() ?: ""
+                                        if (dText.isNotBlank()) {
+                                            defs.add(DefinitionItem(pos, dText))
+                                        }
+                                        dObj.getAsJsonArray("synonyms")?.forEach { s ->
+                                            val text = s.asString.trim()
+                                            if (text.isNotBlank()) syns.add(text)
+                                        }
+                                        dObj.getAsJsonArray("antonyms")?.forEach { a ->
+                                            val text = a.asString.trim()
+                                            if (text.isNotBlank()) ants.add(text)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (defs.isEmpty() && syns.isEmpty() && ants.isEmpty()) {
+                            null
+                        } else {
+                            WordSummary(
+                                word = word,
+                                score = null,
+                                definitions = defs,
+                                synonyms = syns.distinct(),
+                                antonyms = ants.distinct(),
+                                reference = null,
+                                isOnline = true
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        if (result != null) {
+            if (onlineCache.size > 500) {
+                onlineCache.clear()
+            }
+            onlineCache[lower] = result
+        }
+        return result
     }
 
     private fun formatScore(score: Float): String {
@@ -421,6 +533,12 @@ object VocabGenerator {
             isFakeBoldText = true
             isAntiAlias = true
         }
+        val refPaint = TextPaint().apply {
+            color = Color.rgb(113, 128, 150)
+            textSize = 19.5f
+            textSkewX = -0.2f
+            isAntiAlias = true
+        }
         val headerPaint = TextPaint().apply {
             color = Color.rgb(43, 108, 176) // blue
             textSize = 24f
@@ -525,12 +643,19 @@ object VocabGenerator {
                             yOffset += headerSpacing
                         }
 
-                        // Draw Word Headword (Bold Navy) and Score (Antonym Red)
+                        // Draw Word Headword (Bold Navy), Reference (Italic Slate), and Score
                         canvas.drawText(word, margin, yOffset, wordPaint)
+                        var currentX = margin + wordPaint.measureText(word)
+
+                        if (entry.reference != null && !entry.reference.equals(word, ignoreCase = true)) {
+                            val refText = " (Ref: ${entry.reference})"
+                            canvas.drawText(refText, currentX, yOffset, refPaint)
+                            currentX += refPaint.measureText(refText)
+                        }
+
                         if (entry.score != null) {
-                            val wordWidth = wordPaint.measureText(word)
                             val scoreText = " (" + formatScore(entry.score) + ")"
-                            canvas.drawText(scoreText, margin + wordWidth, yOffset, scorePaint)
+                            canvas.drawText(scoreText, currentX, yOffset, scorePaint)
                         }
                         yOffset += wordHeaderHeight
 
@@ -550,10 +675,17 @@ object VocabGenerator {
 
                                 val contWord = "$word (cont.)"
                                 canvas.drawText(contWord, margin, yOffset, wordPaint)
+                                var contX = margin + wordPaint.measureText(contWord)
+
+                                if (entry.reference != null && !entry.reference.equals(word, ignoreCase = true)) {
+                                    val refText = " (Ref: ${entry.reference})"
+                                    canvas.drawText(refText, contX, yOffset, refPaint)
+                                    contX += refPaint.measureText(refText)
+                                }
+
                                 if (entry.score != null) {
-                                    val contWidth = wordPaint.measureText(contWord)
                                     val scoreText = " (" + formatScore(entry.score) + ")"
-                                    canvas.drawText(scoreText, margin + contWidth, yOffset, scorePaint)
+                                    canvas.drawText(scoreText, contX, yOffset, scorePaint)
                                 }
                                 yOffset += wordHeaderHeight
                             }

@@ -133,7 +133,11 @@ fun InteractivePdfPage(
     val (calcStartHandleX, calcStartHandleY) = if (isStartPage && currentWordsList.isNotEmpty()) {
         val sWordIdx = curSel!!.startWordIndex.coerceIn(0, currentWordsList.size - 1)
         val sw = currentWordsList[sWordIdx]
-        Pair(sw.left * displayedWPx, sw.top * displayedHPx)
+        val sLen = maxOf(1, sw.text.length)
+        val sOffset = curSel.startCharOffset.coerceIn(0, sLen)
+        val sFrac = sOffset.toFloat() / sLen
+        val sX = sw.left + (sw.right - sw.left) * sFrac
+        Pair(sX * displayedWPx, sw.top * displayedHPx)
     } else {
         Pair(0f, 0f)
     }
@@ -141,7 +145,11 @@ fun InteractivePdfPage(
     val (calcEndHandleX, calcEndHandleY) = if (isEndPage && currentWordsList.isNotEmpty()) {
         val eWordIdx = curSel!!.endWordIndex.coerceIn(0, currentWordsList.size - 1)
         val ew = currentWordsList[eWordIdx]
-        Pair(ew.right * displayedWPx, ew.bottom * displayedHPx)
+        val eLen = maxOf(1, ew.text.length)
+        val eOffset = (if (curSel.endCharOffset in 0..eLen) curSel.endCharOffset else eLen).coerceIn(0, eLen)
+        val eFrac = eOffset.toFloat() / eLen
+        val eX = ew.left + (ew.right - ew.left) * eFrac
+        Pair(eX * displayedWPx, ew.bottom * displayedHPx)
     } else {
         Pair(0f, 0f)
     }
@@ -215,8 +223,8 @@ fun InteractivePdfPage(
                                     pane.activeHighlightMenu = hit
                                     reader.book.activeSelection = null
                                     reader.vocab.activeSelection = null
-                                    reader.dictSummary = null
-                                    reader.showDictPopup = false
+                                    val wordIdx = PdfTextHelper.findWordAt(currentWordsList, xNorm, yNorm)
+                                    reader.tappedHighlightWord = if (wordIdx != -1) currentWordsList[wordIdx].text else null
                                 } else {
                                     reader.book.activeHighlightMenu = null
                                     reader.vocab.activeHighlightMenu = null
@@ -224,6 +232,7 @@ fun InteractivePdfPage(
                                     reader.vocab.activeSelection = null
                                     reader.dictSummary = null
                                     reader.showDictPopup = false
+                                    reader.tappedHighlightWord = null
                                 }
                             }
                         },
@@ -244,11 +253,23 @@ fun InteractivePdfPage(
                             val wordIdx = PdfTextHelper.findWordAt(currentWordsList, xNorm, yNorm)
                             if (wordIdx != -1) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                var startIdx = wordIdx
+                                while (startIdx > 0) {
+                                    val prevW = currentWordsList[startIdx - 1]
+                                    if (prevW.lineIndex == currentWordsList[wordIdx].lineIndex &&
+                                        (currentWordsList[startIdx].left - prevW.right) < 0.003f &&
+                                        prevW.text.any { it.isLetterOrDigit() } && currentWordsList[startIdx].text.any { it.isLetterOrDigit() }) {
+                                        startIdx--
+                                    } else break
+                                }
                                 var endIdx = wordIdx
                                 while (endIdx + 1 < currentWordsList.size) {
                                     val nextW = currentWordsList[endIdx + 1]
-                                    if (nextW.lineIndex == currentWordsList[wordIdx].lineIndex && nextW.text.all { !it.isLetterOrDigit() }) {
-                                        if (kotlin.math.abs(nextW.left - currentWordsList[endIdx].right) < 0.035f) {
+                                    if (nextW.lineIndex == currentWordsList[wordIdx].lineIndex) {
+                                        val gap = nextW.left - currentWordsList[endIdx].right
+                                        if (gap < 0.003f && nextW.text.any { it.isLetterOrDigit() } && currentWordsList[endIdx].text.any { it.isLetterOrDigit() }) {
+                                            endIdx++
+                                        } else if (gap < 0.035f && nextW.text.all { !it.isLetterOrDigit() }) {
                                             endIdx++
                                         } else break
                                     } else break
@@ -258,11 +279,14 @@ fun InteractivePdfPage(
                                 otherPane.activeHighlightMenu = null
                                 pane.activeSelection = TextSelection(
                                     startPageIndex = pageIndex,
-                                    startWordIndex = wordIdx,
+                                    startWordIndex = startIdx,
+                                    startCharOffset = 0,
                                     endPageIndex = pageIndex,
-                                    endWordIndex = endIdx
+                                    endWordIndex = endIdx,
+                                    endCharOffset = currentWordsList[endIdx].text.length
                                 )
                                 pane.activeHighlightMenu = null
+                                reader.tappedHighlightWord = null
                             }
                         }
                     )
@@ -285,7 +309,8 @@ fun InteractivePdfPage(
             val pageWordRange = activeSelection?.wordRangeForPage(pageIndex, currentWordsList.size)
             if (activeSelection != null && pageWordRange != null && currentWordsList.isNotEmpty()) {
                 val s = activeSelection
-                val rects = PdfTextHelper.getSelectionRects(currentWordsList, pageWordRange.first, pageWordRange.last)
+                val (sChar, eChar) = s.charOffsetsForPage(pageIndex, pageWordRange)
+                val rects = PdfTextHelper.getSelectionRects(currentWordsList, pageWordRange.first, pageWordRange.last, sChar, eChar)
                 rects.forEach { r ->
                     drawRoundRect(
                         color = selectionBgColor,
@@ -299,7 +324,10 @@ fun InteractivePdfPage(
                 if (s.startPageIndex == pageIndex) {
                     val sIdx = s.startWordIndex.coerceIn(0, currentWordsList.size - 1)
                     val startWord = currentWordsList[sIdx]
-                    val startX = startWord.left * size.width
+                    val sLen = maxOf(1, startWord.text.length)
+                    val sOffset = s.startCharOffset.coerceIn(0, sLen)
+                    val sFrac = sOffset.toFloat() / sLen
+                    val startX = (startWord.left + (startWord.right - startWord.left) * sFrac) * size.width
                     val startY = startWord.top * size.height
                     val startBottom = startWord.bottom * size.height
 
@@ -320,7 +348,10 @@ fun InteractivePdfPage(
                 if (s.endPageIndex == pageIndex) {
                     val eIdx = s.endWordIndex.coerceIn(0, currentWordsList.size - 1)
                     val endWord = currentWordsList[eIdx]
-                    val endX = endWord.right * size.width
+                    val eLen = maxOf(1, endWord.text.length)
+                    val eOffset = (if (s.endCharOffset in 0..eLen) s.endCharOffset else eLen).coerceIn(0, eLen)
+                    val eFrac = eOffset.toFloat() / eLen
+                    val endX = (endWord.left + (endWord.right - endWord.left) * eFrac) * size.width
                     val endY = endWord.top * size.height
                     val endBottom = endWord.bottom * size.height
 
@@ -383,17 +414,32 @@ fun InteractivePdfPage(
                                 val targetWords = doc.getWords(targetPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), targetPage)
 
                                 if (targetWords.isNotEmpty()) {
-                                    val targetIdx = PdfTextHelper.findSelectionWordAt(targetWords, curXNorm, targetYNorm, isEndHandle = false)
-                                    if (targetIdx != -1) {
-                                        val sel = pane.activeSelection ?: return@detectDragGestures
-                                        if (targetPage > sel.endPageIndex || (targetPage == sel.endPageIndex && targetIdx > sel.endWordIndex)) {
-                                            if (sel.startPageIndex != sel.endPageIndex || sel.startWordIndex != sel.endWordIndex) {
-                                                pane.activeSelection = sel.copy(startPageIndex = sel.endPageIndex, startWordIndex = sel.endWordIndex)
-                                            }
-                                        } else {
-                                            if (sel.startPageIndex != targetPage || sel.startWordIndex != targetIdx) {
-                                                pane.activeSelection = sel.copy(startPageIndex = targetPage, startWordIndex = targetIdx)
-                                            }
+                                    val selPoint = PdfTextHelper.findSelectionPointAt(targetWords, curXNorm, targetYNorm, isEndHandle = false)
+                                    val sel = pane.activeSelection ?: return@detectDragGestures
+                                    val endWords = if (sel.endPageIndex == targetPage) targetWords else (doc.getWords(sel.endPageIndex) ?: emptyList())
+                                    val endWordLen = if (endWords.isNotEmpty() && sel.endWordIndex in endWords.indices) endWords[sel.endWordIndex].text.length else 0
+                                    val endChar = if (sel.endCharOffset in 0..endWordLen) sel.endCharOffset else endWordLen
+
+                                    val cmp = PdfTextHelper.compareSelectionPos(
+                                        targetPage, selPoint.wordIndex, selPoint.charOffset,
+                                        sel.endPageIndex, sel.endWordIndex, endChar
+                                    )
+
+                                    if (cmp > 0) {
+                                        if (sel.startPageIndex != sel.endPageIndex || sel.startWordIndex != sel.endWordIndex || sel.startCharOffset != endChar) {
+                                            pane.activeSelection = sel.copy(
+                                                startPageIndex = sel.endPageIndex,
+                                                startWordIndex = sel.endWordIndex,
+                                                startCharOffset = endChar
+                                            )
+                                        }
+                                    } else {
+                                        if (sel.startPageIndex != targetPage || sel.startWordIndex != selPoint.wordIndex || sel.startCharOffset != selPoint.charOffset) {
+                                            pane.activeSelection = sel.copy(
+                                                startPageIndex = targetPage,
+                                                startWordIndex = selPoint.wordIndex,
+                                                startCharOffset = selPoint.charOffset
+                                            )
                                         }
                                     }
                                 }
@@ -455,17 +501,30 @@ fun InteractivePdfPage(
                                 val targetWords = doc.getWords(targetPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), targetPage)
 
                                 if (targetWords.isNotEmpty()) {
-                                    val targetIdx = PdfTextHelper.findSelectionWordAt(targetWords, curXNorm, targetYNorm, isEndHandle = true)
-                                    if (targetIdx != -1) {
-                                        val sel = pane.activeSelection ?: return@detectDragGestures
-                                        if (targetPage < sel.startPageIndex || (targetPage == sel.startPageIndex && targetIdx < sel.startWordIndex)) {
-                                            if (sel.endPageIndex != sel.startPageIndex || sel.endWordIndex != sel.startWordIndex) {
-                                                pane.activeSelection = sel.copy(endPageIndex = sel.startPageIndex, endWordIndex = sel.startWordIndex)
-                                            }
-                                        } else {
-                                            if (sel.endPageIndex != targetPage || sel.endWordIndex != targetIdx) {
-                                                pane.activeSelection = sel.copy(endPageIndex = targetPage, endWordIndex = targetIdx)
-                                            }
+                                    val selPoint = PdfTextHelper.findSelectionPointAt(targetWords, curXNorm, targetYNorm, isEndHandle = true)
+                                    val sel = pane.activeSelection ?: return@detectDragGestures
+                                    val startChar = sel.startCharOffset
+
+                                    val cmp = PdfTextHelper.compareSelectionPos(
+                                        targetPage, selPoint.wordIndex, selPoint.charOffset,
+                                        sel.startPageIndex, sel.startWordIndex, startChar
+                                    )
+
+                                    if (cmp < 0) {
+                                        if (sel.endPageIndex != sel.startPageIndex || sel.endWordIndex != sel.startWordIndex || sel.endCharOffset != startChar) {
+                                            pane.activeSelection = sel.copy(
+                                                endPageIndex = sel.startPageIndex,
+                                                endWordIndex = sel.startWordIndex,
+                                                endCharOffset = startChar
+                                            )
+                                        }
+                                    } else {
+                                        if (sel.endPageIndex != targetPage || sel.endWordIndex != selPoint.wordIndex || sel.endCharOffset != selPoint.charOffset) {
+                                            pane.activeSelection = sel.copy(
+                                                endPageIndex = targetPage,
+                                                endWordIndex = selPoint.wordIndex,
+                                                endCharOffset = selPoint.charOffset
+                                            )
                                         }
                                     }
                                 }

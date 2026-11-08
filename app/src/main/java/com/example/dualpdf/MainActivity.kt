@@ -530,6 +530,12 @@ data class HistoryEntry(
     val lastClosedMs: Long = timeMs
 )
 
+data class SearchHistoryEntry(
+    val query: String,
+    val formattedQuery: String = query,
+    val timeMs: Long = System.currentTimeMillis()
+)
+
 data class OcrBox(
     val text: String,
     val left: Float,
@@ -591,16 +597,70 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         private set
     var googleSearchToken by mutableLongStateOf(0L)
         private set
+    var googleLastLoadedToken by mutableLongStateOf(0L)
+
+    var googleWebView: android.webkit.WebView? = null
+        private set
+
+    fun getOrCreateGoogleWebView(context: Context): android.webkit.WebView {
+        val existing = googleWebView
+        if (existing != null) {
+            (existing.parent as? android.view.ViewGroup)?.removeView(existing)
+            return existing
+        }
+        val wv = android.webkit.WebView(context).apply {
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.textZoom = 110
+            setInitialScale(110)
+        }
+        googleWebView = wv
+        return wv
+    }
+
+    fun destroyGoogleWebView() {
+        googleWebView?.let { wv ->
+            (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+            wv.destroy()
+        }
+        googleWebView = null
+        googleLastLoadedToken = 0L
+    }
+
+    fun formatGoogleSearchQuery(text: String): String {
+        val clean = text.filter { it >= ' ' || it == '\n' || it == '\t' }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (clean.isBlank()) return ""
+        if (clean.startsWith("meaning of this:", ignoreCase = true) ||
+            clean.startsWith("meaning of this part by part:", ignoreCase = true)) {
+            return clean
+        }
+        val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val stripped = clean.trim('"', '“', '”', '\'', '‘', '’')
+        return if (words.size > 1) {
+            "meaning of this part by part: \"$stripped\""
+        } else {
+            "meaning of this: \"$stripped\""
+        }
+    }
 
     fun searchGoogle(query: String) {
         vocabMode = VocabMode.GOOGLE_WEB
         showDictPopup = false
         dictSummary = null
         val clean = query.filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
-        googleRawQuery = clean
+        if (clean.isBlank()) return
+        val formatted = formatGoogleSearchQuery(clean)
+        googleRawQuery = formatted
         googleSearchToken++
-        val encoded = Uri.encode(clean)
+        val encoded = Uri.encode(formatted)
         googleSearchQuery = "https://www.google.com/search?q=$encoded"
+        addToSearchHistory(clean, formatted)
     }
 
     var expectedVocab by mutableStateOf<String?>(null)
@@ -612,6 +672,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     val bookmarks = mutableStateListOf<Bookmark>()
     val highlights = mutableStateListOf<Highlight>()
     val history = mutableStateListOf<HistoryEntry>()
+    val searchHistory = mutableStateListOf<SearchHistoryEntry>()
+    var historyTab by mutableStateOf(0)
+    var ribbonScrollOffset by mutableStateOf(0)
 
     var activeSelection: TextSelection?
         get() = book.activeSelection ?: vocab.activeSelection
@@ -636,6 +699,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     var dictSummary by mutableStateOf<VocabGenerator.WordSummary?>(null)
     var showDictPopup by mutableStateOf(true)
+    var tappedHighlightWord by mutableStateOf<String?>(null)
 
     var isBookEpub by mutableStateOf(false)
         private set
@@ -770,6 +834,19 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         }
     }
 
+    private fun getIntPref(key: String, default: Int): Int {
+        return runCatching { prefs.getInt(key, default) }.getOrElse {
+            runCatching {
+                val raw = prefs.all[key]
+                when (raw) {
+                    is Number -> raw.toInt()
+                    is String -> raw.toIntOrNull() ?: raw.toDoubleOrNull()?.toInt() ?: default
+                    else -> default
+                }
+            }.getOrNull() ?: default
+        }
+    }
+
     private fun syncFromDisk() {
         try {
             if (stateFile.exists()) {
@@ -780,8 +857,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                     val map: Map<String, Any> = Gson().fromJson(json, type)
                     val editor = prefs.edit()
                     map.forEach { (k, v) ->
-                        if (k.startsWith("book_page_") || k.startsWith("vocab_page_")) {
+                        if (k.startsWith("book_page_") || k.startsWith("vocab_page_") || k == "history_tab" || k == "ribbon_scroll_offset") {
                             if (v is Number) editor.putInt(k, v.toInt())
+                            else if (v is String) editor.putInt(k, v.toIntOrNull() ?: v.toDoubleOrNull()?.toInt() ?: 0)
                         } else if (k == "is_dark_mode" || k.startsWith("default_book_extracted")) {
                             if (v is Boolean) editor.putBoolean(k, v)
                             else if (v is String) editor.putBoolean(k, v.toBoolean())
@@ -910,6 +988,57 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         saveHistory()
     }
 
+    fun addToSearchHistory(query: String, formatted: String) {
+        val clean = query.trim()
+        if (clean.isBlank()) return
+        searchHistory.removeAll { it.query.equals(clean, ignoreCase = true) || it.formattedQuery.equals(formatted, ignoreCase = true) }
+        searchHistory.add(0, SearchHistoryEntry(clean, formatted, System.currentTimeMillis()))
+        if (searchHistory.size > 1000) {
+            searchHistory.removeAt(searchHistory.lastIndex)
+        }
+        saveSearchHistory()
+    }
+
+    fun removeFromSearchHistory(entry: SearchHistoryEntry) {
+        searchHistory.remove(entry)
+        saveSearchHistory()
+    }
+
+    fun clearSearchHistory() {
+        searchHistory.clear()
+        saveSearchHistory()
+    }
+
+    fun setAndSaveHistoryTab(tab: Int) {
+        historyTab = tab
+        editPrefs { putInt("history_tab", tab) }
+    }
+
+    fun saveRibbonScrollOffset(offset: Int) {
+        ribbonScrollOffset = offset
+        editPrefs { putInt("ribbon_scroll_offset", offset) }
+    }
+
+    private fun loadSearchHistory() {
+        searchHistory.clear()
+        val json = prefs.getString("search_history", "[]")
+        try {
+            val type = object : TypeToken<List<SearchHistoryEntry>>() {}.type
+            val list: List<SearchHistoryEntry> = Gson().fromJson(json, type) ?: emptyList()
+            searchHistory.addAll(list.sortedByDescending { it.timeMs })
+        } catch (_: Exception) {}
+    }
+
+    private fun saveSearchHistory() {
+        val json = Gson().toJson(searchHistory)
+        editPrefs { putString("search_history", json) }
+    }
+
+    private fun loadRibbonAndHistoryTabState() {
+        historyTab = getIntPref("history_tab", 0)
+        ribbonScrollOffset = getIntPref("ribbon_scroll_offset", 0)
+    }
+
     fun syncFromDiskAndRestore() {
         cleanStorageDirectoryIfExceedsLimit()
         syncFromDisk()
@@ -917,6 +1046,8 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHighlights()
         loadHistory()
+        loadSearchHistory()
+        loadRibbonAndHistoryTabState()
 
         val lastBook = prefs.getString("last_book_uri", null)
         if (!lastBook.isNullOrBlank() && book.doc == null) {
@@ -932,8 +1063,10 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         loadBookmarks()
         loadHighlights()
         loadHistory()
+        loadSearchHistory()
+        loadRibbonAndHistoryTabState()
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v16", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v17", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -941,7 +1074,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v16", true) }
+                editPrefs { putBoolean("default_book_extracted_v17", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -1011,7 +1144,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             vocab.name = withContext(Dispatchers.IO) { Sidecar.displayName(ctx, uri) } ?: expected
             
             val mapped = getMappedVocabPage(book.page + 1)
-            val pageToSet = targetPage ?: if (mapped != null) (mapped - 1) else prefs.getInt("vocab_page_$bookKey", 0)
+            val pageToSet = targetPage ?: if (mapped != null) (mapped - 1) else getIntPref("vocab_page_$bookKey", 0)
             vocab.page = pageToSet.coerceIn(0, doc.pageCount - 1)
             vocab.doc = doc
             vocab.uri = uri
@@ -1471,7 +1604,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 try {
                     val doc = withContext(Dispatchers.IO) { PdfDoc.open(ctx, uri) }
                     if (doc.pageCount < 1) { doc.close(); throw IOException("The PDF has no pages") }
-                    book.page = prefs.getInt("book_page_$bookKey", 0).coerceIn(0, doc.pageCount - 1)
+                    book.page = getIntPref("book_page_$bookKey", 0).coerceIn(0, doc.pageCount - 1)
                     book.doc = doc
                     book.uri = uri
                     isBookEpub = isCurrentBookEpub()
@@ -1517,7 +1650,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             val doc = withContext(Dispatchers.IO) { PdfDoc.open(ctx, found) }
             if (doc.pageCount < 1) { doc.close(); throw IOException("The vocabulary PDF has no pages") }
             vocab.name = withContext(Dispatchers.IO) { Sidecar.displayName(ctx, found) } ?: expected
-            val savedVocabPage = prefs.getInt("vocab_page_$bookKey", -1)
+            val savedVocabPage = getIntPref("vocab_page_$bookKey", -1)
             val mapped = getMappedVocabPage(book.page + 1)
             val initialPage = if (savedVocabPage >= 0) savedVocabPage else (mapped?.minus(1) ?: 0)
             vocab.page = initialPage.coerceIn(0, doc.pageCount - 1)
@@ -1618,6 +1751,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         scope.cancel()          // cancel first so nothing holds Reader's lock while we close
+        reader.destroyGoogleWebView()
         reader.closeAll()
         super.onDestroy()
     }
@@ -1830,6 +1964,15 @@ fun ReaderScreen(reader: Reader) {
     var showBookmarks by remember { mutableStateOf(false) }
     var showHighlights by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    val readingHistoryListState = rememberLazyListState()
+    val searchHistoryListState = rememberLazyListState()
+    val ribbonScrollState = rememberScrollState(initial = reader.ribbonScrollOffset)
+
+    LaunchedEffect(ribbonScrollState.value) {
+        if (ribbonScrollState.value != reader.ribbonScrollOffset) {
+            reader.saveRibbonScrollOffset(ribbonScrollState.value)
+        }
+    }
     var showLobDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var isDownloadingLob by remember { mutableStateOf(false) }
@@ -1858,37 +2001,59 @@ fun ReaderScreen(reader: Reader) {
     var showZenControls by rememberSaveable { mutableStateOf(true) }
 
     val activeSel = reader.activeSelection
-    val activePane = if (reader.book.activeSelection != null) reader.book else reader.vocab
+    val activeHighlight = reader.book.activeHighlightMenu ?: reader.vocab.activeHighlightMenu
+    val activePane = if (reader.book.activeSelection != null || reader.book.activeHighlightMenu != null) reader.book else reader.vocab
 
-    LaunchedEffect(activePane, activeSel) {
-        if (activeSel == null) {
+    LaunchedEffect(activePane, activeSel, activeHighlight, reader.tappedHighlightWord) {
+        if (activeSel == null && activeHighlight == null) {
             reader.dictSummary = null
             return@LaunchedEffect
         }
         val activeDoc = activePane.doc
-        if (activeDoc == null) {
+        if (activeDoc == null && activeSel != null) {
             reader.dictSummary = null
             return@LaunchedEffect
         }
         withContext(Dispatchers.IO) {
             VocabGenerator.init(ctx)
-            val fullText = (activeSel.minPage..activeSel.maxPage).mapNotNull { p ->
-                val pWords = activeDoc.getWords(p) ?: activeDoc.getOrExtractWords(ctx, activePane.uri ?: (if (activePane == reader.book) reader.getBookUri() else null), p)
-                val pRange = activeSel.wordRangeForPage(p, pWords.size)
-                if (pRange != null && pWords.isNotEmpty()) {
-                    PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
-                } else null
-            }.joinToString(" ").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+            val textToLookup: String? = if (activeSel != null && activeDoc != null) {
+                val fullText = (activeSel.minPage..activeSel.maxPage).mapNotNull { p ->
+                    val pWords = activeDoc.getWords(p) ?: activeDoc.getOrExtractWords(ctx, activePane.uri ?: (if (activePane == reader.book) reader.getBookUri() else null), p)
+                    val pRange = activeSel.wordRangeForPage(p, pWords.size)
+                    if (pRange != null && pWords.isNotEmpty()) {
+                        val (sChar, eChar) = activeSel.charOffsetsForPage(p, pRange)
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last, sChar, eChar).takeIf { it.isNotBlank() }
+                    } else null
+                }.joinToString(" ").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
 
-            if (fullText.isNotBlank()) {
-                val summary = VocabGenerator.lookupSynonymsAndAntonyms(fullText)
+                val words = fullText.split(Regex("\\s+")).filter { it.isNotBlank() }
+                if (words.size == 1) words[0] else null
+            } else if (activeHighlight != null) {
+                val tapped = reader.tappedHighlightWord?.filter { it >= ' ' || it == '\n' || it == '\t' }?.trim()
+                if (!tapped.isNullOrBlank()) {
+                    tapped
+                } else {
+                    val hlText = activeHighlight.text.filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
+                    val hlWords = hlText.split(Regex("\\s+")).filter { it.isNotBlank() }
+                    if (hlWords.size == 1) hlWords[0] else null
+                }
+            } else null
+
+            if (!textToLookup.isNullOrBlank()) {
+                var summary = VocabGenerator.lookupSynonymsAndAntonyms(textToLookup)
+                if (summary == null) {
+                    coroutineContext.ensureActive()
+                    summary = VocabGenerator.lookupOnlineDictionary(textToLookup)
+                }
+                coroutineContext.ensureActive()
                 withContext(Dispatchers.Main) {
                     reader.dictSummary = summary
-                    reader.showDictPopup = true
+                    reader.showDictPopup = (summary != null)
                 }
             } else {
                 withContext(Dispatchers.Main) {
                     reader.dictSummary = null
+                    reader.showDictPopup = false
                 }
             }
         }
@@ -2658,54 +2823,154 @@ fun ReaderScreen(reader: Reader) {
         if (showHistory) {
             AlertDialog(
                 onDismissRequest = { showHistory = false },
-                title = { Text("History") },
-                text = {
-                    if (reader.history.isEmpty()) {
-                        Text("No history yet.")
-                    } else {
-                        LazyColumn {
-                            items(reader.history) { h ->
-                                val isTutorial = h.name == "Tutorial" || h.uri.contains("PdfHelperReader_Tutorial.pdf")
-                                val firstOpenedStr = remember(h.firstOpenedMs, h.timeMs) {
-                                    val t = if (h.firstOpenedMs > 0) h.firstOpenedMs else h.timeMs
-                                    java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
-                                }
-                                val lastClosedStr = remember(h.lastClosedMs, h.timeMs) {
-                                    val t = if (h.lastClosedMs > 0) h.lastClosedMs else h.timeMs
-                                    java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
-                                }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            reader.onBookPicked(Uri.parse(h.uri), h.name)
-                                            showHistory = false
-                                        }
-                                        .padding(vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                title = {
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("History", style = MaterialTheme.typography.titleLarge)
+                            if (reader.historyTab == 1 && reader.searchHistory.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { reader.clearSearchHistory() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(h.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Spacer(Modifier.height(2.dp))
-                                        Text("First Opened: $firstOpenedStr", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                        Text("Last Closed: $lastClosedStr", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        if (!isTutorial) {
-                                            TextButton(onClick = {
-                                                val deleted = reader.deleteAssociatedVocab(h)
-                                                if (deleted) {
-                                                    Toast.makeText(ctx, "Vocab file deleted", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(ctx, "No vocab file found to delete", Toast.LENGTH_SHORT).show()
+                                    Text("Clear All", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        TabRow(
+                            selectedTabIndex = reader.historyTab,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Tab(
+                                selected = reader.historyTab == 0,
+                                onClick = { reader.setAndSaveHistoryTab(0) },
+                                text = { Text("Reading") }
+                            )
+                            Tab(
+                                selected = reader.historyTab == 1,
+                                onClick = { reader.setAndSaveHistoryTab(1) },
+                                text = { Text("Search History") }
+                            )
+                        }
+                    }
+                },
+                text = {
+                    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp)) {
+                        if (reader.historyTab == 0) {
+                            if (reader.history.isEmpty()) {
+                                Text("No reading history yet.", modifier = Modifier.padding(vertical = 16.dp))
+                            } else {
+                                LazyColumn(
+                                    state = readingHistoryListState,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    items(reader.history) { h ->
+                                        val isTutorial = h.name == "Tutorial" || h.uri.contains("PdfHelperReader_Tutorial.pdf")
+                                        val firstOpenedStr = remember(h.firstOpenedMs, h.timeMs) {
+                                            val t = if (h.firstOpenedMs > 0) h.firstOpenedMs else h.timeMs
+                                            java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
+                                        }
+                                        val lastClosedStr = remember(h.lastClosedMs, h.timeMs) {
+                                            val t = if (h.lastClosedMs > 0) h.lastClosedMs else h.timeMs
+                                            java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
+                                        }
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    reader.onBookPicked(Uri.parse(h.uri), h.name)
+                                                    showHistory = false
                                                 }
-                                            }) {
-                                                Text("Del vocab", style = MaterialTheme.typography.labelSmall)
+                                                .padding(vertical = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(h.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Spacer(Modifier.height(2.dp))
+                                                Text("First Opened: $firstOpenedStr", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                                Text("Last Closed: $lastClosedStr", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                                             }
-                                            TextButton(onClick = { reader.removeFromHistory(h) }) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                if (!isTutorial) {
+                                                    TextButton(onClick = {
+                                                        val deleted = reader.deleteAssociatedVocab(h)
+                                                        if (deleted) {
+                                                            Toast.makeText(ctx, "Vocab file deleted", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            Toast.makeText(ctx, "No vocab file found to delete", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }) {
+                                                        Text("Del vocab", style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                    TextButton(onClick = { reader.removeFromHistory(h) }) {
+                                                        Text("Del", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            if (reader.searchHistory.isEmpty()) {
+                                Text("No search history yet.", modifier = Modifier.padding(vertical = 16.dp))
+                            } else {
+                                LazyColumn(
+                                    state = searchHistoryListState,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    items(reader.searchHistory) { s ->
+                                        val timeStr = remember(s.timeMs) {
+                                            java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(s.timeMs))
+                                        }
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    reader.searchGoogle(s.query)
+                                                    showHistory = false
+                                                }
+                                                .padding(vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = s.query,
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                if (s.formattedQuery != s.query && s.formattedQuery.isNotBlank()) {
+                                                    Spacer(Modifier.height(2.dp))
+                                                    Text(
+                                                        text = s.formattedQuery,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = timeStr,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                            Spacer(Modifier.width(8.dp))
+                                            TextButton(
+                                                onClick = { reader.removeFromSearchHistory(s) },
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
                                                 Text("Del", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                                             }
                                         }
@@ -2836,7 +3101,7 @@ fun ReaderScreen(reader: Reader) {
 
             Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
                 Row(
-                    Modifier.fillMaxWidth().height(topBarHeight).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
+                    Modifier.fillMaxWidth().height(topBarHeight).horizontalScroll(ribbonScrollState).padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -3475,6 +3740,7 @@ fun PdfPane(
         ) {
             if (isGoogleWebInVocab) {
                 GoogleWebView(
+                    reader = reader,
                     url = reader.googleSearchQuery,
                     rawQuery = reader.googleRawQuery,
                     searchToken = reader.googleSearchToken,
@@ -3605,16 +3871,16 @@ fun PdfPane(
 
             val shouldShowPopup = when (splitMode) {
                 SplitMode.SPLIT_BOTH -> {
-                    if (reader.book.activeSelection != null) {
-                        label == "VOCAB" && reader.vocabMode != VocabMode.GOOGLE_WEB
-                    } else if (reader.vocab.activeSelection != null) {
+                    if (reader.book.activeSelection != null || reader.book.activeHighlightMenu != null) {
+                        label == "VOCAB"
+                    } else if (reader.vocab.activeSelection != null || reader.vocab.activeHighlightMenu != null) {
                         label == "BOOK"
                     } else {
                         false
                     }
                 }
-                SplitMode.ONLY_BOOK -> label == "BOOK" && reader.book.activeSelection != null
-                SplitMode.ONLY_VOCAB -> label == "VOCAB" && reader.vocab.activeSelection != null && reader.vocabMode != VocabMode.GOOGLE_WEB
+                SplitMode.ONLY_BOOK -> label == "BOOK" && (reader.book.activeSelection != null || reader.book.activeHighlightMenu != null)
+                SplitMode.ONLY_VOCAB -> label == "VOCAB" && (reader.vocab.activeSelection != null || reader.vocab.activeHighlightMenu != null)
             }
             val dictSummary = reader.dictSummary
             if (shouldShowPopup && dictSummary != null && reader.showDictPopup && !reader.isDraggingSelection) {
@@ -3623,12 +3889,15 @@ fun PdfPane(
                 } else {
                     Alignment.BottomCenter
                 }
+                val topPadding = if (align == Alignment.TopCenter) {
+                    if (isGoogleWebInVocab) 38.dp else 10.dp
+                } else 0.dp
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(align)
                         .padding(
-                            top = if (align == Alignment.TopCenter) 10.dp else 0.dp,
+                            top = topPadding,
                             bottom = if (align == Alignment.BottomCenter) 14.dp else 0.dp,
                             start = 6.dp,
                             end = 6.dp
@@ -4773,9 +5042,10 @@ fun PaneSelectionToolbar(
                     val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
-                        val pText = PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last)
+                        val (sChar, eChar) = sel.charOffsetsForPage(p, pRange)
+                        val pText = PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last, sChar, eChar)
                             .filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
-                        val pRects = PdfTextHelper.getSelectionRects(pWords, pRange.first, pRange.last)
+                        val pRects = PdfTextHelper.getSelectionRects(pWords, pRange.first, pRange.last, sChar, eChar)
                         if (pText.isNotBlank()) {
                             Highlight(
                                 pageIndex = p,
@@ -4798,7 +5068,8 @@ fun PaneSelectionToolbar(
                     val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
-                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                        val (sChar, eChar) = sel.charOffsetsForPage(p, pRange)
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last, sChar, eChar).takeIf { it.isNotBlank() }
                     } else null
                 }.joinToString("\n").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
                 android.util.Log.i("SelectionDebug", "onCopy: sel=$sel, textLen=${fullText.length}, preview='${fullText.take(100)}' ... '${fullText.takeLast(100)}'")
@@ -4813,7 +5084,8 @@ fun PaneSelectionToolbar(
                     val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
-                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                        val (sChar, eChar) = sel.charOffsetsForPage(p, pRange)
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last, sChar, eChar).takeIf { it.isNotBlank() }
                     } else null
                 }.joinToString(" ")
                 val cleanQuery = fullText.filter { it >= ' ' || it == '\n' || it == '\t' }.replace(Regex("\\s+"), " ").trim()
@@ -4831,7 +5103,8 @@ fun PaneSelectionToolbar(
                     val pWords = doc.getWords(p) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), p)
                     val pRange = sel.wordRangeForPage(p, pWords.size)
                     if (pRange != null && pWords.isNotEmpty()) {
-                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last).takeIf { it.isNotBlank() }
+                        val (sChar, eChar) = sel.charOffsetsForPage(p, pRange)
+                        PdfTextHelper.getSelectedText(pWords, pRange.first, pRange.last, sChar, eChar).takeIf { it.isNotBlank() }
                     } else null
                 }.joinToString("\n").filter { it >= ' ' || it == '\n' || it == '\t' }.trim()
                 if (fullText.isNotBlank()) {
@@ -4853,22 +5126,29 @@ fun PaneSelectionToolbar(
                     val lastPage = (doc.pageCount - 1).coerceAtLeast(0)
                     val lastWords = doc.getWords(lastPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), lastPage)
                     val lastWordIdx = (lastWords.size - 1).coerceAtLeast(0)
+                    val lastChar = if (lastWords.isNotEmpty()) lastWords[lastWordIdx].text.length else -1
                     pane.activeSelection = TextSelection(
                         startPageIndex = 0,
                         startWordIndex = 0,
+                        startCharOffset = 0,
                         endPageIndex = lastPage,
-                        endWordIndex = lastWordIdx
+                        endWordIndex = lastWordIdx,
+                        endCharOffset = lastChar
                     )
                 } else {
                     // Single-page selection -> select all words on the current page
                     val curPage = sel.startPageIndex
                     val pageWords = doc.getWords(curPage) ?: doc.getOrExtractWords(ctx, pane.uri ?: (if (pane == reader.book) reader.getBookUri() else null), curPage)
                     if (pageWords.isNotEmpty()) {
+                        val lastIdx = pageWords.size - 1
+                        val lastChar = pageWords[lastIdx].text.length
                         pane.activeSelection = TextSelection(
                             startPageIndex = curPage,
                             startWordIndex = 0,
+                            startCharOffset = 0,
                             endPageIndex = curPage,
-                            endWordIndex = pageWords.size - 1
+                            endWordIndex = lastIdx,
+                            endCharOffset = lastChar
                         )
                     }
                 }
@@ -4923,6 +5203,13 @@ fun WordSynonymAntonymPopup(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (summary.reference != null && !summary.reference.equals(summary.word, ignoreCase = true)) {
+                        Text(
+                            text = "(Ref: ${summary.reference})",
+                            style = MaterialTheme.typography.labelMedium.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                    }
                     if (summary.score != null) {
                         val scoreText = if (summary.score % 1.0f == 0.0f) summary.score.toInt().toString() else summary.score.toString()
                         Surface(
@@ -4935,6 +5222,20 @@ fun WordSynonymAntonymPopup(
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else if (summary.isOnline) {
+                        Surface(
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            modifier = Modifier.padding(0.dp)
+                        ) {
+                            Text(
+                                text = "online",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -5499,19 +5800,20 @@ fun ContinuousPageItem(
 
 @Composable
 fun GoogleWebView(
+    reader: Reader,
     url: String,
     rawQuery: String = "",
     searchToken: Long = 0L,
     isDarkMode: Boolean = false,
     onBackToVocab: () -> Unit = {}
 ) {
-    var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
-    var currentLoadedUrl by remember { mutableStateOf("") }
-    var canGoBack by remember { mutableStateOf(false) }
-    var canGoForward by remember { mutableStateOf(false) }
-    var pageTitle by remember { mutableStateOf("Google Search") }
+    var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(reader.googleWebView) }
+    var currentLoadedUrl by remember { mutableStateOf(reader.googleWebView?.url ?: "") }
+    var canGoBack by remember { mutableStateOf(reader.googleWebView?.canGoBack() == true) }
+    var canGoForward by remember { mutableStateOf(reader.googleWebView?.canGoForward() == true) }
+    var pageTitle by remember { mutableStateOf(reader.googleWebView?.title ?: "Google Search") }
     var lastInjectedToken by remember { mutableLongStateOf(0L) }
-    var isPageLoading by remember { mutableStateOf(true) }
+    var isPageLoading by remember { mutableStateOf(reader.googleWebView == null) }
 
     val bgColor = if (isDarkMode) androidx.compose.ui.graphics.Color(0xFF202124) else androidx.compose.ui.graphics.Color.White
     val nativeBgColor = if (isDarkMode) android.graphics.Color.parseColor("#202124") else android.graphics.Color.WHITE
@@ -5566,7 +5868,12 @@ fun GoogleWebView(
 
     LaunchedEffect(url, searchToken) {
         if (url.isNotBlank()) {
-            if (url != currentLoadedUrl) {
+            if (searchToken > 0L && searchToken != reader.googleLastLoadedToken) {
+                reader.googleLastLoadedToken = searchToken
+                currentLoadedUrl = url
+                isPageLoading = true
+                webViewRef?.loadUrl(url)
+            } else if (url != currentLoadedUrl && (webViewRef?.url.isNullOrBlank())) {
                 currentLoadedUrl = url
                 isPageLoading = true
                 webViewRef?.loadUrl(url)
@@ -5644,55 +5951,60 @@ fun GoogleWebView(
         ) {
             AndroidView(
                 factory = { ctx ->
-                    android.webkit.WebView(ctx).apply {
-                        layoutParams = android.view.ViewGroup.LayoutParams(
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        setBackgroundColor(nativeBgColor)
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.textZoom = 110
-                        setInitialScale(110)
-                        webViewClient = object : android.webkit.WebViewClient() {
-                            override fun onPageStarted(view: android.webkit.WebView?, pageUrl: String?, favicon: android.graphics.Bitmap?) {
-                                super.onPageStarted(view, pageUrl, favicon)
-                                isPageLoading = true
-                                canGoBack = view?.canGoBack() == true
-                                canGoForward = view?.canGoForward() == true
-                            }
-
-                            override fun onPageFinished(view: android.webkit.WebView?, pageUrl: String?) {
-                                super.onPageFinished(view, pageUrl)
-                                isPageLoading = false
-                                canGoBack = view?.canGoBack() == true
-                                canGoForward = view?.canGoForward() == true
-                                pageTitle = view?.title ?: "Google Search"
-                                injectFullQueryIntoSearchBox(view, pageUrl)
-                            }
-
-                            override fun doUpdateVisitedHistory(view: android.webkit.WebView?, pageUrl: String?, isReload: Boolean) {
-                                super.doUpdateVisitedHistory(view, pageUrl, isReload)
-                                canGoBack = view?.canGoBack() == true
-                                canGoForward = view?.canGoForward() == true
-                            }
+                    val wv = reader.getOrCreateGoogleWebView(ctx)
+                    (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+                    wv.setBackgroundColor(nativeBgColor)
+                    wv.webViewClient = object : android.webkit.WebViewClient() {
+                        override fun onPageStarted(view: android.webkit.WebView?, pageUrl: String?, favicon: android.graphics.Bitmap?) {
+                            super.onPageStarted(view, pageUrl, favicon)
+                            isPageLoading = true
+                            canGoBack = view?.canGoBack() == true
+                            canGoForward = view?.canGoForward() == true
                         }
-                        loadUrl(url)
-                        currentLoadedUrl = url
-                        webViewRef = this
+
+                        override fun onPageFinished(view: android.webkit.WebView?, pageUrl: String?) {
+                            super.onPageFinished(view, pageUrl)
+                            isPageLoading = false
+                            canGoBack = view?.canGoBack() == true
+                            canGoForward = view?.canGoForward() == true
+                            pageTitle = view?.title ?: "Google Search"
+                            injectFullQueryIntoSearchBox(view, pageUrl)
+                        }
+
+                        override fun doUpdateVisitedHistory(view: android.webkit.WebView?, pageUrl: String?, isReload: Boolean) {
+                            super.doUpdateVisitedHistory(view, pageUrl, isReload)
+                            canGoBack = view?.canGoBack() == true
+                            canGoForward = view?.canGoForward() == true
+                        }
                     }
+
+                    if (wv.url.isNullOrBlank() || (searchToken > 0L && searchToken != reader.googleLastLoadedToken)) {
+                        reader.googleLastLoadedToken = searchToken
+                        wv.loadUrl(url)
+                        currentLoadedUrl = url
+                        isPageLoading = true
+                    } else {
+                        currentLoadedUrl = wv.url ?: url
+                        canGoBack = wv.canGoBack()
+                        canGoForward = wv.canGoForward()
+                        pageTitle = wv.title ?: "Google Search"
+                        isPageLoading = false
+                    }
+                    webViewRef = wv
+                    wv
                 },
                 update = { webView ->
                     webViewRef = webView
                     webView.setBackgroundColor(nativeBgColor)
-                    if (url != currentLoadedUrl && url.isNotBlank()) {
-                        isPageLoading = true
+                    if (searchToken > 0L && searchToken != reader.googleLastLoadedToken && url.isNotBlank()) {
+                        reader.googleLastLoadedToken = searchToken
                         currentLoadedUrl = url
+                        isPageLoading = true
                         webView.loadUrl(url)
                     }
                 },
                 onRelease = { webView ->
-                    webView.destroy()
+                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
                 },
                 modifier = Modifier.fillMaxSize()
             )

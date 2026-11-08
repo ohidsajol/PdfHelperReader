@@ -1,4 +1,4 @@
-# PdfHelperReader (v4.1.0)
+# PdfHelperReader (v4.2.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -6,6 +6,28 @@
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
 **PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
+
+---
+
+## 🌟 What's New in v4.2.0
+
+### 📖 Vocabulary PDF Word References
+* **Explicit Cross-References**: Companion vocabulary PDFs now explicitly show headword references for words and inflections that reference base forms (e.g. `wobble (Ref: Wabble) (32.5)`).
+* **Reference Display in Quick Popup**: The instant definition popup also displays `(Ref: <word>)` in italics directly in the title row.
+
+### 🕒 Dual-Tab History & Persistent State
+* **Search History Tab**: The History dialog (`H` button) now features two tabs: **Reading History** and **Search History**. Past Google searches are stored with one-tap re-search, individual deletion, and a **Clear All** option.
+* **Persistent Tab & Scroll Positions**: The active History tab and the scroll positions of both lists are permanently preserved across dialog dismissals and app restarts.
+* **Ribbon Toolbar Position Preservation**: The horizontal scroll offset of the main ribbon toolbar is saved permanently and restored across Zen mode toggles and app restarts.
+
+### 🌐 Free Online Dictionary API Fallback
+* **Automatic Online Lookup**: When a selected word is missing from the 964k-word local dictionary, the app automatically queries the free online dictionary API in the background.
+* **Comprehensive Details**: Renders parts of speech, definitions, synonyms, antonyms, and an **online** badge right inside the quick popup.
+
+### 🎯 Precision Drag Selection & Smart Query Formatting
+* **Sub-Word Dragging**: Selecting text long-presses to whole words cleanly, while handle dragging provides precision sub-word control without forced word snapping.
+* **Smart Search Query Formatting**: Action bar Google searches automatically format queries: single words search `meaning of this: "word"`, and multi-word phrases search `meaning of this part by part: "phrase"`.
+* **Lower-Pane Definition Popup**: Selecting a word in the upper pane consistently renders the definition popup in the lower pane, even when Google Search is open.
 
 ---
 
@@ -95,7 +117,7 @@
 
 ## 📦 Download & Installation
 Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
-* **[PdfHelperReader-v4.1.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.1.0/PdfHelperReader-v4.1.0.apk)**
+* **[PdfHelperReader-v4.2.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.2.0/PdfHelperReader-v4.2.0.apk)**
 
 To build from source:
 ```bash

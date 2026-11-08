@@ -26,7 +26,7 @@ class NumberedCanvas(canvas.Canvas):
         self.saveState()
         self.setFont("Helvetica", 9.5)
         self.setFillColor(colors.HexColor('#718096'))
-        page_text = f"PdfHelperReader v4.1.0 Manual  •  Page {self._pageNumber} of {page_count}"
+        page_text = f"PdfHelperReader v4.2.0 Manual  •  Page {self._pageNumber} of {page_count}"
         self.drawRightString(612 - 36, 20, page_text)
         self.restoreState()
 
@@ -120,7 +120,7 @@ def build_pdf(filename):
 
     # Title & Subtitle
     story.append(Paragraph("PdfHelperReader – Comprehensive User Manual", title_style))
-    story.append(Paragraph("(v4.1.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
+    story.append(Paragraph("(v4.2.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
 
     # Section 1
     story.append(Paragraph("1. Welcome & Introduction", h1_style))
@@ -174,7 +174,7 @@ def build_pdf(filename):
         ],
         [
             Paragraph("G:Vocab / G:Google", table_btn_style),
-            Paragraph("<b>Vocab Mode</b>: Toggles lower pane between Vocabulary PDF sidecar and embedded Google Search. Automatically switches to Dual-Pane Split View with persistent layout and pre-warmed Chromium engine for instant, flash-free search.", table_desc_style)
+            Paragraph("<b>Vocab Mode & Preserved Search State</b>: Toggles lower pane between Vocabulary PDF sidecar and embedded Google Search. Automatically switches to Dual-Pane Split View with persistent layout and pre-warmed Chromium engine. Preserves browsing history and state when switching back and forth, and performs new searches on-demand.", table_desc_style)
         ],
         [
             Paragraph("T", table_btn_style),
@@ -190,7 +190,7 @@ def build_pdf(filename):
         ],
         [
             Paragraph("H", table_btn_style),
-            Paragraph("<b>History</b>: Opens reading history showing First Opened & Last Closed timestamps for up to 1,000 documents, with a Del vocab button to delete associated vocabulary files.", table_desc_style)
+            Paragraph("<b>History (Dual-Tab)</b>: Opens history dialog with two tabs: <b>Reading History</b> (tracks First Opened & Last Closed timestamps for up to 1,000 documents with Del vocab) and <b>Search History</b> (logs all past Google searches with one-tap re-search, item deletion, and Clear All). Tab selection and scroll positions are permanently preserved.", table_desc_style)
         ],
         [
             Paragraph("O", table_btn_style),
@@ -238,9 +238,11 @@ def build_pdf(filename):
         "• <b>1.5× Enlarged Typography</b>: Generated vocabulary PDFs render with 1.5× enlarged typography "
         "(24pt headers, 19.5pt headwords & scores, and 16.5pt definitions, examples, synonyms, and antonyms) with generous "
         "proportional line and block spacing for effortless study on mobile screens.<br/>"
+        "• <b>Headword References</b>: Companion vocabulary PDFs explicitly display cross-references and inflected headword targets (e.g. <b>wobble (Ref: Wabble) (32.5)</b>) in high-contrast italic slate typography.<br/>"
         "• <b>Difficulty Scores</b>: Word rarity scores (1–100) are displayed right beside headwords in slate gray (e.g. <b>anopheles (29.25)</b>).<br/>"
         "• <b>Word Frequency Filtering</b>: An interactive slider dialog lets you filter vocabulary density (1 to 100) before generating the sidecar PDF.<br/>"
-        "• <b>Instant Definition & Synonyms Popup</b>: Selecting any recognized word in the reader opens a lower-pane quick popup displaying part of speech, definition, synonyms, and antonyms. The popup auto-dismisses smoothly when opening Google search.",
+        "• <b>Instant Definition & Synonyms Popup</b>: Selecting any recognized word in the reader opens a lower-pane quick popup displaying part of speech, definition, synonyms, and antonyms. The popup always renders in the lower pane during split view (even when Google is open) and auto-dismisses smoothly when opening Google search.<br/>"
+        "• <b>Free Online Dictionary Fallback</b>: If a selected word is missing from the local offline dictionary, the reader queries the free online dictionary API in the background, displaying definitions, synonyms, antonyms, and an <b>online</b> badge.",
         body_style
     ))
 
@@ -304,6 +306,22 @@ def build_pdf(filename):
     story.append(Paragraph(
         "An automatic 500 MB Storage Manager monitors folder size, deleting older files step-by-step while protecting the latest active file in "
         "each category.",
+        body_style
+    ))
+
+    story.append(Paragraph("12. Dual-Tab History & Persistent App State", h1_style))
+    story.append(Paragraph(
+        "The History dialog (<b>H</b>) features two independent tabs: <b>Reading History</b> and <b>Search History</b>.<br/>"
+        "• <b>Search History</b>: Tracks all past Google searches. Tapping any item re-executes the search instantly, with single-tap deletion and a <b>Clear All</b> option.<br/>"
+        "• <b>Tab State & Scroll Persistence</b>: Tab selection and exact scroll positions are preserved across dialog dismissals and app restarts.<br/>"
+        "• <b>Ribbon Toolbar Position Preservation</b>: The horizontal scroll offset of the upper ribbon toolbar is saved permanently and restored smoothly across Zen mode toggles and app restarts.",
+        body_style
+    ))
+
+    story.append(Paragraph("13. Precision Sub-Word Selection & Smart Search Formatting", h1_style))
+    story.append(Paragraph(
+        "• <b>Precision Drag Selection</b>: Long-pressing on any word expands the selection to cover the entire word, while dragging the selection handles allows fine-grained, sub-word precision without rigid word snapping.<br/>"
+        "• <b>Smart Search Query Formatting</b>: Initiating a Google search from selected text automatically crafts the search query: single words search <i>meaning of this: \"word\"</i>, while multi-word phrases search <i>meaning of this part by part: \"phrase\"</i>.",
         body_style
     ))
 
