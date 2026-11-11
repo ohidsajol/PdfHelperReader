@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.pdfhelperreader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "4.3.0"
+        versionCode = 18
+        versionName = "4.3.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -66,6 +66,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.itextpdf:itextg:5.5.10")
+    implementation("com.madgag:scprov-jdk15on:1.47.0.2")
+    implementation("com.madgag:scpkix-jdk15on:1.47.0.2")
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")

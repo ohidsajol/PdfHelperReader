@@ -1,4 +1,4 @@
-# PdfHelperReader (v4.3.0)
+# PdfHelperReader (v4.3.1)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -6,6 +6,19 @@
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
 **PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
+
+---
+
+## 🌟 What's New in v4.3.1
+
+### 🔍 Floating Text Selection Magnifier Loupe
+* **1.45× Magnification Capsule**: Pressing a word or dragging the Start/End selection handles reveals a crisp, high-contrast magnifying pill above your finger rendering the live page, highlight overlays, and vertical guide pin.
+* **Smart Screen-Edge Positioning**: Clamps horizontally within screen bounds, pins vertically to the text line's center to prevent vertical jitter, and flips cleanly below your finger when selecting near the top edge.
+* **Whole-Word Long-Press Preservation**: Long-pressing a word reliably selects the entire word cleanly without accidental slicing from minor touch jitter.
+
+### 🔐 AES-Encrypted PDF Support & Crash Protection
+* **Native AES-128 & AES-256 Decryption**: Packaged SpongyCastle crypto libraries (`scprov-jdk15on` & `scpkix-jdk15on`) alongside iTextG so permission-protected AES PDFs extract text, look up words, and generate vocabulary sidecars smoothly.
+* **Hardened Linkage Error Fallback**: Safeguards text extraction, page reading, vocabulary generation, and OCR status checks against `LinkageError`s and decryption failures so protected or malformed PDFs never crash the app.
 
 ---
 
@@ -132,7 +145,7 @@
 
 ## 📦 Download & Installation
 Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
-* **[PdfHelperReader-v4.3.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.3.0/PdfHelperReader-v4.3.0.apk)**
+* **[PdfHelperReader-v4.3.1.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.3.1/PdfHelperReader-v4.3.1.apk)**
 
 To build from source:
 ```bash

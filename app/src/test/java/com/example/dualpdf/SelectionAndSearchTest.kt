@@ -4,7 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import com.itextpdf.text.Document
+import com.itextpdf.text.Paragraph
 import com.itextpdf.text.pdf.PdfReader
+import com.itextpdf.text.pdf.PdfWriter
+import com.itextpdf.text.pdf.parser.PdfTextExtractor
+import kotlinx.coroutines.CancellationException
 
 class SelectionAndSearchTest {
 
@@ -430,5 +435,73 @@ class SelectionAndSearchTest {
         )
         assertEquals(150f, srcStart.x, 0.001f)
         assertEquals(337.5f, srcStart.y, 0.001f)
+    }
+
+    @Test
+    fun testAesEncryptedPdfTextAndWordExtraction() {
+        val sampleSentence = "Encrypted vocabulary extraction works reliably."
+        val modes = listOf(
+            "aes128" to PdfWriter.ENCRYPTION_AES_128,
+            "aes256" to PdfWriter.ENCRYPTION_AES_256
+        )
+
+        for ((label, encryptionMode) in modes) {
+            val tempPdf = File.createTempFile("test_$label", ".pdf")
+            try {
+                val doc = Document()
+                tempPdf.outputStream().use { out ->
+                    val writer = PdfWriter.getInstance(doc, out)
+                    writer.setEncryption(
+                        null,
+                        "owner-secret".toByteArray(),
+                        PdfWriter.ALLOW_PRINTING or PdfWriter.ALLOW_COPY,
+                        encryptionMode
+                    )
+                    doc.open()
+                    doc.add(Paragraph(sampleSentence))
+                    doc.close()
+                }
+
+                val reader = PdfReader(tempPdf.absolutePath)
+                try {
+                    assertTrue("Reader should detect $label encryption", reader.isEncrypted)
+                    val pageText = PdfTextExtractor.getTextFromPage(reader, 1)
+                    assertTrue("Extracted text for $label should contain sentence", pageText.contains("Encrypted vocabulary"))
+
+                    val words = PdfTextHelper.extractWordsFromReader(reader, 1).map { it.text }
+                    assertTrue("Extracted words for $label should contain 'Encrypted'", words.contains("Encrypted"))
+                    assertTrue("Extracted words for $label should contain 'vocabulary'", words.contains("vocabulary"))
+                } finally {
+                    reader.close()
+                }
+            } finally {
+                tempPdf.delete()
+            }
+        }
+    }
+
+    @Test
+    fun testRethrowIfFatalAllowsRecoverableAndLinkageErrors() {
+        // Recoverable exceptions and LinkageError (e.g. NoClassDefFoundError) should not rethrow
+        IllegalStateException("recoverable").rethrowIfFatal()
+        NoClassDefFoundError("missing optional class").rethrowIfFatal()
+
+        // Coroutine cancellation must propagate
+        var cancelledRethrown = false
+        try {
+            CancellationException("cancelled").rethrowIfFatal()
+        } catch (_: CancellationException) {
+            cancelledRethrown = true
+        }
+        assertTrue(cancelledRethrown)
+
+        // Non-linkage Errors must propagate
+        var nonLinkageErrorRethrown = false
+        try {
+            AssertionError("fatal").rethrowIfFatal()
+        } catch (_: AssertionError) {
+            nonLinkageErrorRethrown = true
+        }
+        assertTrue(nonLinkageErrorRethrown)
     }
 }

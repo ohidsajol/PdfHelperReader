@@ -167,7 +167,9 @@ class PdfDoc private constructor(
                     itextReader = com.itextpdf.text.pdf.PdfReader(bytes)
                 }
             }
-        } catch (_: Exception) {}
+        } catch (t: Throwable) {
+            t.rethrowIfFatal()
+        }
         return itextReader
     }
 
@@ -206,7 +208,9 @@ class PdfDoc private constructor(
                         return words
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (t: Throwable) {
+                t.rethrowIfFatal()
+            }
         }
         return emptyList()
     }
@@ -1148,7 +1152,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             return
         }
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v18", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v19", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -1156,7 +1160,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v18", true) }
+                editPrefs { putBoolean("default_book_extracted_v19", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -1347,10 +1351,12 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                         onDone(result)
                     }
                 }
-            } catch (e: Exception) {
-                if (e !is CancellationException && coroutineContext.isActive) {
+            } catch (t: Throwable) {
+                t.rethrowIfFatal()
+                if (coroutineContext.isActive) {
+                    val err = t.toRecoverableException()
                     withContext(Dispatchers.Main) {
-                        onError(e)
+                        onError(err)
                     }
                 }
             }
@@ -1401,7 +1407,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                             return@withContext "Document already contains searchable text — OCR is not needed"
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (t: Throwable) {
+                    t.rethrowIfFatal()
+                }
             }
         }
 
@@ -1442,11 +1450,11 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 withContext(Dispatchers.Main) {
                     onDone(outputPdf)
                 }
-            } catch (e: Exception) {
-                if (e !is CancellationException) {
-                    withContext(Dispatchers.Main) {
-                        onError(e)
-                    }
+            } catch (t: Throwable) {
+                t.rethrowIfFatal()
+                val err = t.toRecoverableException()
+                withContext(Dispatchers.Main) {
+                    onError(err)
                 }
             }
         }
@@ -5181,7 +5189,8 @@ suspend fun extractPageText(ctx: Context, uri: Uri?, doc: PdfDoc, pageIndex: Int
         val result = text.ifEmpty { "No selectable text found on this page." }
         doc.putPageText(pageIndex, result)
         result
-    } catch (e: Exception) {
+    } catch (t: Throwable) {
+        t.rethrowIfFatal()
         "Could not extract text for this page."
     }
 }

@@ -14,6 +14,7 @@ import com.itextpdf.text.pdf.parser.ImageRenderInfo
 import com.itextpdf.text.pdf.parser.PdfReaderContentParser
 import com.itextpdf.text.pdf.parser.RenderListener
 import com.itextpdf.text.pdf.parser.TextRenderInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -158,6 +159,22 @@ fun parseHexColor(hex: String, defaultColor: Color = Color(0xFFFFF176)): Color {
     }
 }
 
+/**
+ * Rethrows coroutine cancellation and non-linkage JVM errors so recoverable exceptions
+ * and missing-class linkage errors can be handled without terminating the app.
+ */
+internal fun Throwable.rethrowIfFatal() {
+    if (this is CancellationException || (this is Error && this !is LinkageError)) {
+        throw this
+    }
+}
+
+/**
+ * Adapts any caught [Throwable] into an [Exception] for callback signatures that accept [Exception].
+ */
+internal fun Throwable.toRecoverableException(): Exception =
+    (this as? Exception) ?: RuntimeException(message ?: javaClass.simpleName, this)
+
 object PdfTextHelper {
 
     private val ocrClient by lazy {
@@ -185,8 +202,9 @@ object PdfTextHelper {
                     return@withContext words
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (t: Throwable) {
+            t.rethrowIfFatal()
+            t.printStackTrace()
         }
 
         // 3. Fallback to ML Kit OCR for scanned pages
