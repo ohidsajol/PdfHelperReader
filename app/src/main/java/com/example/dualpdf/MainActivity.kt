@@ -605,6 +605,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     val vocab = Pane()
     var vocabMode by mutableStateOf(VocabMode.VOCAB_PDF)
     var previousVocabMode by mutableStateOf<VocabMode?>(null)
+    var previousSplitModeForGoogle by mutableStateOf<SplitMode?>(null)
     var googleSearchQuery by mutableStateOf("https://www.google.com")
         private set
     var googleRawQuery by mutableStateOf("")
@@ -643,6 +644,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         }
         googleWebView = null
         googleLastLoadedToken = 0L
+        previousSplitModeForGoogle = null
     }
 
     fun formatGoogleSearchQuery(text: String): String {
@@ -651,13 +653,15 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             .trim()
         if (clean.isBlank()) return ""
         if (clean.startsWith("meaning of this:", ignoreCase = true) ||
+            clean.startsWith("Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase:", ignoreCase = true) ||
+            clean.startsWith("give me meaning of this phrase by phrase if the following text is not too long else sentence by sentence:", ignoreCase = true) ||
             clean.startsWith("meaning of this part by part:", ignoreCase = true)) {
             return clean
         }
         val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
         val stripped = clean.trim('"', '“', '”', '\'', '‘', '’')
         return if (words.size > 1) {
-            "meaning of this part by part: \"$stripped\""
+            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$stripped\""
         } else {
             "meaning of this: \"$stripped\""
         }
@@ -1152,7 +1156,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             return
         }
         
-        val defaultExtracted = getBoolPref("default_book_extracted_v19", false)
+        val defaultExtracted = getBoolPref("default_book_extracted_v20", false)
         if (!defaultExtracted) {
             try {
                 val destFile = File(ctx.getExternalFilesDir(null), "PdfHelperReader_Tutorial.pdf")
@@ -1160,7 +1164,7 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                 ctx.assets.open("PdfHelperReader_Tutorial.pdf").use { i ->
                     destFile.outputStream().use { o -> i.copyTo(o) }
                 }
-                editPrefs { putBoolean("default_book_extracted_v19", true) }
+                editPrefs { putBoolean("default_book_extracted_v20", true) }
                 val uri = Uri.fromFile(destFile)
                 addToHistory(uri, "Tutorial")
                 
@@ -2137,7 +2141,7 @@ fun ReaderScreen(reader: Reader) {
         }
     }
 
-    var splitMode by remember { mutableStateOf(SplitMode.SPLIT_BOTH) }
+    var splitMode by remember { mutableStateOf(SplitMode.ONLY_BOOK) }
     var showOcrConfirmDialog by remember { mutableStateOf(false) }
     var showForceOcrDialog by remember { mutableStateOf(false) }
     var ocrDialogMessage by remember { mutableStateOf("") }
@@ -2372,6 +2376,7 @@ fun ReaderScreen(reader: Reader) {
                         onExitZen = { isZenMode = false },
                         onTripleTap = handleTripleTap,
                         onToggleSplitMode = {
+                            reader.previousSplitModeForGoogle = null
                             splitMode = when (splitMode) {
                                 SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
                                 SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
@@ -2430,6 +2435,9 @@ fun ReaderScreen(reader: Reader) {
                                         Text("Dismiss", color = MaterialTheme.colorScheme.inverseOnSurface)
                                     }
                                     Button(onClick = {
+                                        if (splitMode != SplitMode.SPLIT_BOTH) {
+                                            reader.previousSplitModeForGoogle = splitMode
+                                        }
                                         reader.vocabMode = VocabMode.GOOGLE_WEB
                                         reader.searchGoogle(lastCopiedText)
                                         splitMode = SplitMode.SPLIT_BOTH
@@ -3090,6 +3098,10 @@ fun ReaderScreen(reader: Reader) {
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clickable {
+                                                    if (splitMode != SplitMode.SPLIT_BOTH) {
+                                                        reader.previousSplitModeForGoogle = splitMode
+                                                        splitMode = SplitMode.SPLIT_BOTH
+                                                    }
                                                     reader.searchGoogle(s.query)
                                                     showHistory = false
                                                 }
@@ -3345,6 +3357,7 @@ fun ReaderScreen(reader: Reader) {
 
                     RibbonBtn(
                         onClick = {
+                            reader.previousSplitModeForGoogle = null
                             splitMode = when (splitMode) {
                                 SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
                                 SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
@@ -3434,12 +3447,18 @@ fun ReaderScreen(reader: Reader) {
                             reader.vocabMode = when (reader.vocabMode) {
                                 VocabMode.VOCAB_PDF -> {
                                     if (splitMode != SplitMode.SPLIT_BOTH) {
+                                        reader.previousSplitModeForGoogle = splitMode
                                         splitMode = SplitMode.SPLIT_BOTH
                                     }
                                     VocabMode.GOOGLE_WEB
                                 }
                                 VocabMode.GOOGLE_WEB -> {
                                     isSyncedReading = false
+                                    val prev = reader.previousSplitModeForGoogle
+                                    if (prev != null && prev != SplitMode.SPLIT_BOTH) {
+                                        splitMode = prev
+                                    }
+                                    reader.previousSplitModeForGoogle = null
                                     VocabMode.VOCAB_PDF
                                 }
                                 VocabMode.BROWSER -> {
@@ -3606,6 +3625,7 @@ fun ReaderScreen(reader: Reader) {
                     onExitZen = { isZenMode = false },
                     onTripleTap = handleTripleTap,
                     onToggleSplitMode = {
+                        reader.previousSplitModeForGoogle = null
                         splitMode = when (splitMode) {
                             SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
                             SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
@@ -3696,6 +3716,9 @@ fun ReaderScreen(reader: Reader) {
                                     Text("Dismiss", color = MaterialTheme.colorScheme.inverseOnSurface)
                                 }
                                 Button(onClick = {
+                                    if (splitMode != SplitMode.SPLIT_BOTH) {
+                                        reader.previousSplitModeForGoogle = splitMode
+                                    }
                                     reader.vocabMode = VocabMode.GOOGLE_WEB
                                     reader.searchGoogle(lastCopiedText)
                                     splitMode = SplitMode.SPLIT_BOTH
@@ -3960,7 +3983,14 @@ fun PdfPane(
                     rawQuery = reader.googleRawQuery,
                     searchToken = reader.googleSearchToken,
                     isDarkMode = isDarkMode,
-                    onBackToVocab = { reader.vocabMode = VocabMode.VOCAB_PDF }
+                    onBackToVocab = {
+                        val prev = reader.previousSplitModeForGoogle
+                        if (prev != null && prev != SplitMode.SPLIT_BOTH) {
+                            onSetSplitMode(prev)
+                        }
+                        reader.previousSplitModeForGoogle = null
+                        reader.vocabMode = VocabMode.VOCAB_PDF
+                    }
                 )
             } else if (isBrowserInVocab) {
                 FileBrowserContent(
@@ -4002,7 +4032,12 @@ fun PdfPane(
                             isZenMode = isZenMode,
                             onToggleZenControls = onToggleZenControls,
                             onTripleTap = onTripleTap,
-                            onOpenGoogle = { onSetSplitMode(SplitMode.SPLIT_BOTH) }
+                            onOpenGoogle = {
+                                if (splitMode != SplitMode.SPLIT_BOTH) {
+                                    reader.previousSplitModeForGoogle = splitMode
+                                    onSetSplitMode(SplitMode.SPLIT_BOTH)
+                                }
+                            }
                         )
                     } else {
                         PageView(
@@ -4015,7 +4050,12 @@ fun PdfPane(
                             isZenMode = isZenMode,
                             onToggleZenControls = onToggleZenControls,
                             onTripleTap = onTripleTap,
-                            onOpenGoogle = { onSetSplitMode(SplitMode.SPLIT_BOTH) }
+                            onOpenGoogle = {
+                                if (splitMode != SplitMode.SPLIT_BOTH) {
+                                    reader.previousSplitModeForGoogle = splitMode
+                                    onSetSplitMode(SplitMode.SPLIT_BOTH)
+                                }
+                            }
                         )
                     }
                 } else {
@@ -4066,13 +4106,19 @@ fun PdfPane(
                             text = "G",
                             modifier = Modifier.clickable {
                                 if (reader.vocabMode == VocabMode.VOCAB_PDF) {
-                                    reader.vocabMode = VocabMode.GOOGLE_WEB
                                     if (splitMode != SplitMode.SPLIT_BOTH) {
+                                        reader.previousSplitModeForGoogle = splitMode
                                         onSetSplitMode(SplitMode.SPLIT_BOTH)
                                     }
+                                    reader.vocabMode = VocabMode.GOOGLE_WEB
                                     Toast.makeText(ctx, "Google Mode ON (Split View)", Toast.LENGTH_SHORT).show()
                                 } else {
                                     reader.vocabMode = VocabMode.VOCAB_PDF
+                                    val prev = reader.previousSplitModeForGoogle
+                                    if (prev != null && prev != SplitMode.SPLIT_BOTH) {
+                                        onSetSplitMode(prev)
+                                    }
+                                    reader.previousSplitModeForGoogle = null
                                     Toast.makeText(ctx, "Google Mode OFF", Toast.LENGTH_SHORT).show()
                                 }
                             }.padding(vertical = 1.dp, horizontal = 2.dp),
@@ -4083,6 +4129,7 @@ fun PdfPane(
                         Text(
                             text = splitLabel,
                             modifier = Modifier.clickable {
+                                reader.previousSplitModeForGoogle = null
                                 onToggleSplitMode()
                             }.padding(vertical = 1.dp, horizontal = 2.dp),
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
@@ -6181,6 +6228,8 @@ fun GoogleWebView(
                 .fillMaxWidth()
                 .background(bgColor)
         ) {
+            var lastDarkMode by remember { mutableStateOf(isDarkMode) }
+
             AndroidView(
                 factory = { ctx ->
                     val wv = reader.getOrCreateGoogleWebView(ctx)
@@ -6225,19 +6274,20 @@ fun GoogleWebView(
                     webViewRef = wv
                     wv
                 },
-                update = { webView ->
-                    webViewRef = webView
-                    webView.setBackgroundColor(nativeBgColor)
+                update = { wv ->
+                    webViewRef = wv
+                    if (lastDarkMode != isDarkMode) {
+                        lastDarkMode = isDarkMode
+                        wv.setBackgroundColor(nativeBgColor)
+                    }
                     if (searchToken > 0L && searchToken != reader.googleLastLoadedToken && url.isNotBlank()) {
                         reader.googleLastLoadedToken = searchToken
                         currentLoadedUrl = url
                         isPageLoading = true
-                        webView.loadUrl(url)
+                        wv.loadUrl(url)
                     }
                 },
-                onRelease = { webView ->
-                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
-                },
+                onRelease = { /* Do not remove or destroy wv; Reader manages its singleton lifecycle */ },
                 modifier = Modifier.fillMaxSize()
             )
 

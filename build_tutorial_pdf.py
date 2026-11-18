@@ -26,7 +26,7 @@ class NumberedCanvas(canvas.Canvas):
         self.saveState()
         self.setFont("Helvetica", 9.5)
         self.setFillColor(colors.HexColor('#718096'))
-        page_text = f"PdfHelperReader v4.3.1 Manual  •  Page {self._pageNumber} of {page_count}"
+        page_text = f"PdfHelperReader v4.4.0 Manual  •  Page {self._pageNumber} of {page_count}"
         self.drawRightString(612 - 36, 20, page_text)
         self.restoreState()
 
@@ -120,7 +120,7 @@ def build_pdf(filename):
 
     # Title & Subtitle
     story.append(Paragraph("PdfHelperReader – Comprehensive User Manual", title_style))
-    story.append(Paragraph("(v4.3.1) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
+    story.append(Paragraph("(v4.4.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
 
     # Section 1
     story.append(Paragraph("1. Welcome & Introduction", h1_style))
@@ -326,7 +326,7 @@ def build_pdf(filename):
     story.append(Paragraph(
         "• <b>Floating Selection Magnifier Loupe</b>: Pressing down on a word or dragging the Start/End selection handles displays a <b>1.45×</b> magnified capsule loupe above your finger showing the text, highlights, and vertical handle guide pin. The loupe clamps cleanly to screen edges and automatically flips below your finger near the top of a page.<br/>"
         "• <b>Precision Drag Selection</b>: Long-pressing on any word reliably selects the entire word cleanly without truncation, while dragging the selection handles allows fine-grained, sub-word precision without rigid word snapping.<br/>"
-        "• <b>Smart Search Query Formatting</b>: Initiating a Google search from selected text automatically crafts the search query: single words search <i>meaning of this: \"word\"</i>, while multi-word phrases search <i>meaning of this part by part: \"phrase\"</i>.",
+        "• <b>Smart Search Query Formatting</b>: Initiating a Google search from selected text automatically crafts the search query: single words search <i>meaning of this: \"word\"</i>, while multi-word phrases search <i>Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"phrase\"</i>.",
         body_style
     ))
 
@@ -344,6 +344,15 @@ def build_pdf(filename):
     story.append(Paragraph(
         "• <b>AES-128 & AES-256 PDF Compatibility</b>: Built-in SpongyCastle cryptography enables smooth native text extraction, vocabulary generation, and word selection on permission-protected AES-encrypted PDFs.<br/>"
         "• <b>Graceful Fallback Protection</b>: Non-fatal linkage and decryption errors are safely caught so protected or unusual PDFs gracefully fall back to on-device ML Kit OCR without crashing.",
+        body_style
+    ))
+
+    story.append(Paragraph("16. AI Literary Search Prompt & Single-Pane Navigation (v4.4.0)", h1_style))
+    story.append(Paragraph(
+        "• <b>AI-Optimized Literary & Philosophical Queries</b>: Initiating a Google search from multi-word selections formats the query to guide AI Overviews: <i>Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"phrase\"</i>.<br/>"
+        "• <b>Default Single-Document View</b>: The app opens cleanly by default in single document (book) mode for an expansive, focused reading layout.<br/>"
+        "• <b>Seamless Google Split-Pane Return</b>: Searching Google while reading in single-document mode automatically docks Google in split view. Performing the final back gesture on Google history effortlessly returns you directly to your single-document view.<br/>"
+        "• <b>Flicker-Free Google WebView & Zen Mode</b>: Google search browsing remains stable and flicker-free when scrolling document pages, and maintains active web state reliably across Zen mode transitions.",
         body_style
     ))
 

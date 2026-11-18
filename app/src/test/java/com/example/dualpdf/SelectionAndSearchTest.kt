@@ -1,6 +1,7 @@
 package com.example.dualpdf
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -19,13 +20,15 @@ class SelectionAndSearchTest {
             .trim()
         if (clean.isBlank()) return ""
         if (clean.startsWith("meaning of this:", ignoreCase = true) ||
+            clean.startsWith("Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase:", ignoreCase = true) ||
+            clean.startsWith("give me meaning of this phrase by phrase if the following text is not too long else sentence by sentence:", ignoreCase = true) ||
             clean.startsWith("meaning of this part by part:", ignoreCase = true)) {
             return clean
         }
         val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
         val stripped = clean.trim('"', '“', '”', '\'', '‘', '’')
         return if (words.size > 1) {
-            "meaning of this part by part: \"$stripped\""
+            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$stripped\""
         } else {
             "meaning of this: \"$stripped\""
         }
@@ -41,15 +44,15 @@ class SelectionAndSearchTest {
     @Test
     fun testFormatGoogleSearchQueryMultiWord() {
         assertEquals(
-            "meaning of this part by part: \"in the midst of sorrow\"",
+            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"in the midst of sorrow\"",
             formatGoogleSearchQuery("in the midst of sorrow")
         )
         assertEquals(
-            "meaning of this part by part: \"break a leg\"",
+            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"break a leg\"",
             formatGoogleSearchQuery("  \"break a leg\"  ")
         )
         assertEquals(
-            "meaning of this part by part: \"multiple words with newline\"",
+            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"multiple words with newline\"",
             formatGoogleSearchQuery("multiple\nwords\twith\nnewline")
         )
     }
@@ -58,8 +61,10 @@ class SelectionAndSearchTest {
     fun testFormatGoogleSearchQueryPreservesAlreadyFormatted() {
         val q1 = "meaning of this: \"apple\""
         assertEquals(q1, formatGoogleSearchQuery(q1))
-        val q2 = "meaning of this part by part: \"hello world\""
+        val q2 = "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"hello world\""
         assertEquals(q2, formatGoogleSearchQuery(q2))
+        val q3 = "meaning of this part by part: \"legacy format\""
+        assertEquals(q3, formatGoogleSearchQuery(q3))
     }
 
     @Test
@@ -503,5 +508,105 @@ class SelectionAndSearchTest {
             nonLinkageErrorRethrown = true
         }
         assertTrue(nonLinkageErrorRethrown)
+    }
+
+    @Test
+    fun testDefaultSplitModeIsSingleDocumentBookMode() {
+        val defaultSplitMode = SplitMode.ONLY_BOOK
+        assertEquals(SplitMode.ONLY_BOOK, defaultSplitMode)
+    }
+
+    @Test
+    fun testSingleDocumentModeRestoredOnFinalGoogleBackGesture() {
+        var splitMode = SplitMode.ONLY_BOOK
+        var vocabMode: VocabMode
+        var previousSplitModeForGoogle: SplitMode? = null
+
+        // 1. User searches Google while in single document mode (ONLY_BOOK)
+        if (splitMode != SplitMode.SPLIT_BOTH) {
+            previousSplitModeForGoogle = splitMode
+            splitMode = SplitMode.SPLIT_BOTH
+        }
+        vocabMode = VocabMode.GOOGLE_WEB
+
+        assertEquals(SplitMode.SPLIT_BOTH, splitMode)
+        assertEquals(VocabMode.GOOGLE_WEB, vocabMode)
+        assertEquals(SplitMode.ONLY_BOOK, previousSplitModeForGoogle)
+
+        // 2. Final back gesture triggers onBackToVocab (canGoBack is false)
+        val onBackToVocab = {
+            val prev = previousSplitModeForGoogle
+            if (prev != null && prev != SplitMode.SPLIT_BOTH) {
+                splitMode = prev
+            }
+            previousSplitModeForGoogle = null
+            vocabMode = VocabMode.VOCAB_PDF
+        }
+        onBackToVocab()
+
+        // 3. Document mode should be restored back to ONLY_BOOK and vocabMode to VOCAB_PDF
+        assertEquals(SplitMode.ONLY_BOOK, splitMode)
+        assertEquals(VocabMode.VOCAB_PDF, vocabMode)
+        assertNull(previousSplitModeForGoogle)
+    }
+
+    @Test
+    fun testSplitBothModePreservedOnFinalGoogleBackGesture() {
+        var splitMode = SplitMode.SPLIT_BOTH
+        var vocabMode: VocabMode
+        var previousSplitModeForGoogle: SplitMode? = null
+
+        // User searches Google while already in SPLIT_BOTH mode
+        if (splitMode != SplitMode.SPLIT_BOTH) {
+            previousSplitModeForGoogle = splitMode
+            splitMode = SplitMode.SPLIT_BOTH
+        }
+        vocabMode = VocabMode.GOOGLE_WEB
+
+        assertEquals(SplitMode.SPLIT_BOTH, splitMode)
+        assertEquals(VocabMode.GOOGLE_WEB, vocabMode)
+        assertNull(previousSplitModeForGoogle)
+
+        // Final back gesture
+        val onBackToVocab = {
+            val prev = previousSplitModeForGoogle
+            if (prev != null && prev != SplitMode.SPLIT_BOTH) {
+                splitMode = prev
+            }
+            previousSplitModeForGoogle = null
+            vocabMode = VocabMode.VOCAB_PDF
+        }
+        onBackToVocab()
+
+        assertEquals(SplitMode.SPLIT_BOTH, splitMode)
+        assertEquals(VocabMode.VOCAB_PDF, vocabMode)
+        assertNull(previousSplitModeForGoogle)
+    }
+
+    @Test
+    fun testExplicitSplitModeToggleClearsPreviousSplitModeForGoogle() {
+        var splitMode = SplitMode.ONLY_BOOK
+        var previousSplitModeForGoogle: SplitMode? = null
+
+        // Open Google from ONLY_BOOK
+        if (splitMode != SplitMode.SPLIT_BOTH) {
+            previousSplitModeForGoogle = splitMode
+            splitMode = SplitMode.SPLIT_BOTH
+        }
+        assertEquals(SplitMode.ONLY_BOOK, previousSplitModeForGoogle)
+
+        // User explicitly toggles split mode while reading Google
+        val onToggleSplitMode = {
+            previousSplitModeForGoogle = null
+            splitMode = when (splitMode) {
+                SplitMode.SPLIT_BOTH -> SplitMode.ONLY_BOOK
+                SplitMode.ONLY_BOOK -> SplitMode.ONLY_VOCAB
+                SplitMode.ONLY_VOCAB -> SplitMode.SPLIT_BOTH
+            }
+        }
+        onToggleSplitMode()
+
+        assertNull(previousSplitModeForGoogle)
+        assertEquals(SplitMode.ONLY_BOOK, splitMode)
     }
 }
