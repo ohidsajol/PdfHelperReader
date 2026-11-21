@@ -435,8 +435,38 @@ object VocabGenerator {
         }
     }
 
-    private fun buildPosSpannable(pos: PosEntry): SpannableStringBuilder {
+    fun hasMatchingContent(
+        pos: PosEntry,
+        includeDefinitions: Boolean,
+        includeSynonyms: Boolean,
+        includeAntonyms: Boolean
+    ): Boolean {
+        return (includeDefinitions && pos.def.isNotBlank()) ||
+               (includeSynonyms && pos.syn.any { it.isNotBlank() }) ||
+               (includeAntonyms && pos.ant.any { it.isNotBlank() })
+    }
+
+    fun hasMatchingContent(
+        entry: WordEntry,
+        includeDefinitions: Boolean,
+        includeSynonyms: Boolean,
+        includeAntonyms: Boolean
+    ): Boolean {
+        return entry.pos.any { hasMatchingContent(it, includeDefinitions, includeSynonyms, includeAntonyms) }
+    }
+
+    fun buildPosSpannable(
+        pos: PosEntry,
+        includeDefinitions: Boolean = true,
+        includeSynonyms: Boolean = true,
+        includeAntonyms: Boolean = true
+    ): SpannableStringBuilder {
         val sb = SpannableStringBuilder()
+        val hasDef = includeDefinitions && pos.def.isNotBlank()
+        val hasSyn = includeSynonyms && pos.syn.isNotEmpty() && pos.syn.any { it.isNotBlank() }
+        val hasAnt = includeAntonyms && pos.ant.isNotEmpty() && pos.ant.any { it.isNotBlank() }
+
+        if (!hasDef && !hasSyn && !hasAnt) return sb
 
         // 1. Part of Speech Badge / Label
         if (pos.type.isNotBlank()) {
@@ -447,29 +477,33 @@ object VocabGenerator {
         }
 
         // 2. Definition
-        if (pos.def.isNotBlank()) {
+        if (hasDef) {
             val start = sb.length
             sb.append(pos.def)
             sb.setSpan(ForegroundColorSpan(Color.rgb(45, 55, 72)), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
 
-        // 3. Example(s)
-        if (pos.eg.isNotEmpty()) {
-            val egText = pos.eg.joinToString(" ") { it.trim() }
-            if (egText.isNotBlank()) {
-                if (sb.isNotEmpty()) sb.append("\n  ")
-                val start = sb.length
-                sb.append("e.g. \"").append(egText).append("\"")
-                sb.setSpan(StyleSpan(Typeface.ITALIC), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                sb.setSpan(ForegroundColorSpan(Color.rgb(74, 85, 104)), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            // 3. Example(s)
+            if (pos.eg.isNotEmpty()) {
+                val egText = pos.eg.joinToString(" ") { it.trim() }
+                if (egText.isNotBlank()) {
+                    if (sb.isNotEmpty()) sb.append("\n  ")
+                    val start = sb.length
+                    sb.append("e.g. \"").append(egText).append("\"")
+                    sb.setSpan(StyleSpan(Typeface.ITALIC), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    sb.setSpan(ForegroundColorSpan(Color.rgb(74, 85, 104)), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
             }
         }
 
         // 4. Synonyms
-        if (pos.syn.isNotEmpty()) {
-            val synText = pos.syn.joinToString(", ") { it.trim() }
+        if (hasSyn) {
+            val synText = pos.syn.filter { it.isNotBlank() }.joinToString(", ") { it.trim() }
             if (synText.isNotBlank()) {
-                if (sb.isNotEmpty()) sb.append("\n  ")
+                if (sb.isNotEmpty()) {
+                    if (hasDef) {
+                        sb.append("\n  ")
+                    }
+                }
                 val labelStart = sb.length
                 sb.append("Synonyms: ")
                 sb.setSpan(StyleSpan(Typeface.BOLD_ITALIC), labelStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -482,10 +516,14 @@ object VocabGenerator {
         }
 
         // 5. Antonyms
-        if (pos.ant.isNotEmpty()) {
-            val antText = pos.ant.joinToString(", ") { it.trim() }
+        if (hasAnt) {
+            val antText = pos.ant.filter { it.isNotBlank() }.joinToString(", ") { it.trim() }
             if (antText.isNotBlank()) {
-                if (sb.isNotEmpty()) sb.append("\n  ")
+                if (sb.isNotEmpty()) {
+                    if (hasDef || hasSyn) {
+                        sb.append("\n  ")
+                    }
+                }
                 val labelStart = sb.length
                 sb.append("Antonyms: ")
                 sb.setSpan(StyleSpan(Typeface.BOLD_ITALIC), labelStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -506,6 +544,9 @@ object VocabGenerator {
         outputPdf: File,
         pageRange: IntRange? = null,
         maxScoreThreshold: Float = 100f,
+        includeDefinitions: Boolean = true,
+        includeSynonyms: Boolean = true,
+        includeAntonyms: Boolean = true,
         onProgress: suspend (current: Int, total: Int) -> Unit
     ): VocabResult = withContext(Dispatchers.IO) {
         init(ctx)
@@ -581,7 +622,7 @@ object VocabGenerator {
                     val entry = lookupWithLemmatization(word)
                     if (entry != null && entry.pos.isNotEmpty()) {
                         val score = entry.score ?: 0f
-                        if (score <= maxScoreThreshold) {
+                        if (score <= maxScoreThreshold && hasMatchingContent(entry, includeDefinitions, includeSynonyms, includeAntonyms)) {
                             seen.add(word)
                             validWords.add(word to entry)
                         }
@@ -618,15 +659,18 @@ object VocabGenerator {
                         var totalWordEntryHeight = wordHeaderHeight
 
                         for (pos in entry.pos) {
-                            val span = buildPosSpannable(pos)
-                            val sl = StaticLayout.Builder.obtain(span, 0, span.length, textPaint, textWidth.toInt())
-                                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                                .setLineSpacing(3f, 1f)
-                                .setIncludePad(false)
-                                .build()
-                            posLayouts.add(sl)
-                            totalWordEntryHeight += sl.height + 10f
+                            val span = buildPosSpannable(pos, includeDefinitions, includeSynonyms, includeAntonyms)
+                            if (span.isNotEmpty()) {
+                                val sl = StaticLayout.Builder.obtain(span, 0, span.length, textPaint, textWidth.toInt())
+                                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                                    .setLineSpacing(3f, 1f)
+                                    .setIncludePad(false)
+                                    .build()
+                                posLayouts.add(sl)
+                                totalWordEntryHeight += sl.height + 10f
+                            }
                         }
+                        if (posLayouts.isEmpty()) continue
                         totalWordEntryHeight += 14f // gap between words
 
                         // Page overflow check for entire word
@@ -711,6 +755,276 @@ object VocabGenerator {
             }
 
             VocabResult(outputPdf, pageMap)
+        } finally {
+            androidDoc.close()
+            reader?.close()
+        }
+    }
+
+    fun extractUniqueSortedWords(text: String): List<String> {
+        val wordsRegex = Regex("\\b[a-zA-Z]{2,}\\b")
+        val tokens = wordsRegex.findAll(text).map { it.value.lowercase() }
+        return tokens.toSet().sorted()
+    }
+
+    fun getWordsWithDefinitions(
+        words: List<String>,
+        maxScoreThreshold: Float = 100f,
+        includeDefinitions: Boolean = true,
+        includeSynonyms: Boolean = true,
+        includeAntonyms: Boolean = true
+    ): List<Pair<String, WordEntry>> {
+        val result = mutableListOf<Pair<String, WordEntry>>()
+        for (word in words) {
+            val entry = lookupWithLemmatization(word)
+            if (entry != null && entry.pos.isNotEmpty()) {
+                val score = entry.score ?: 0f
+                if (score <= maxScoreThreshold && hasMatchingContent(entry, includeDefinitions, includeSynonyms, includeAntonyms)) {
+                    result.add(word to entry)
+                }
+            }
+        }
+        return result
+    }
+
+    suspend fun generateAllWords(
+        ctx: Context,
+        inputPdf: File,
+        outputPdf: File,
+        maxScoreThreshold: Float = 100f,
+        includeDefinitions: Boolean = true,
+        includeSynonyms: Boolean = true,
+        includeAntonyms: Boolean = true,
+        onProgress: suspend (current: Int, total: Int) -> Unit
+    ): File = withContext(Dispatchers.IO) {
+        init(ctx)
+
+        val wordsRegex = Regex("\\b[a-zA-Z]{2,}\\b")
+        var reader: PdfReader? = null
+        val androidDoc = PdfDocument()
+
+        val textPaint = TextPaint().apply {
+            color = Color.rgb(45, 55, 72)
+            textSize = 16.5f
+            isAntiAlias = true
+        }
+        val wordPaint = TextPaint().apply {
+            color = Color.rgb(26, 54, 93) // deep navy
+            textSize = 19.5f
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        val scorePaint = TextPaint().apply {
+            color = Color.rgb(113, 128, 150)
+            textSize = 19.5f
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        val refPaint = TextPaint().apply {
+            color = Color.rgb(113, 128, 150)
+            textSize = 19.5f
+            textSkewX = -0.2f
+            isAntiAlias = true
+        }
+        val headerPaint = TextPaint().apply {
+            color = Color.rgb(43, 108, 176) // blue
+            textSize = 24f
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        val sectionPaint = TextPaint().apply {
+            color = Color.rgb(43, 108, 176) // blue
+            textSize = 26f
+            isFakeBoldText = true
+            isAntiAlias = true
+        }
+        val pageNumPaint = TextPaint().apply {
+            color = Color.rgb(160, 174, 192) // cool gray
+            textSize = 14f
+            isAntiAlias = true
+        }
+        val noWordsPaint = TextPaint().apply {
+            color = Color.GRAY
+            textSize = 18f
+            textSkewX = -0.25f
+            isAntiAlias = true
+        }
+
+        try {
+            reader = PdfReader(inputPdf.absolutePath)
+            val totalPages = reader.numberOfPages
+
+            val allUniqueWords = mutableSetOf<String>()
+
+            for (i in 1..totalPages) {
+                coroutineContext.ensureActive()
+                onProgress(i, totalPages)
+                val pageText = PdfTextExtractor.getTextFromPage(reader, i)
+                val tokens = wordsRegex.findAll(pageText).map { it.value.lowercase() }
+                for (token in tokens) {
+                    allUniqueWords.add(token)
+                }
+            }
+
+            val sortedWords = allUniqueWords.sorted()
+            val validWords = mutableListOf<Pair<String, WordEntry>>()
+
+            for (word in sortedWords) {
+                coroutineContext.ensureActive()
+                val entry = lookupWithLemmatization(word)
+                if (entry != null && entry.pos.isNotEmpty()) {
+                    val score = entry.score ?: 0f
+                    if (score <= maxScoreThreshold && hasMatchingContent(entry, includeDefinitions, includeSynonyms, includeAntonyms)) {
+                        validWords.add(word to entry)
+                    }
+                }
+            }
+
+            val margin = 50f
+            val textWidth = 612f - (margin * 2) // 512f
+            val pageBottomLimit = 740f
+            val headerSpacing = 35f
+
+            var vocabPageNum = 1
+
+            if (validWords.isEmpty()) {
+                val pageInfo = PdfDocument.PageInfo.Builder(612, 792, vocabPageNum).create()
+                val page = androidDoc.startPage(pageInfo)
+                val canvas = page.canvas
+                var yOffset = 50f
+                canvas.drawText("All Words (0 words found)", margin, yOffset, headerPaint)
+                yOffset += headerSpacing + 20f
+                canvas.drawText("No dictionary words found in this document matching score ≤ ${maxScoreThreshold.toInt()}.", margin, yOffset, noWordsPaint)
+                androidDoc.finishPage(page)
+            } else {
+                var currentLetter: Char? = null
+
+                var pageInfo = PdfDocument.PageInfo.Builder(612, 792, vocabPageNum).create()
+                var page = androidDoc.startPage(pageInfo)
+                var canvas = page.canvas
+                var yOffset = 50f
+                var contentStartY = yOffset + headerSpacing
+
+                fun drawPageHeader() {
+                    val scoreStr = if (maxScoreThreshold < 100f) " · score ≤ ${maxScoreThreshold.toInt()}" else ""
+                    val title = "All Words (${validWords.size} unique words$scoreStr)"
+                    canvas.drawText(title, margin, yOffset, headerPaint)
+                    val pStr = "Page $vocabPageNum"
+                    canvas.drawText(pStr, 612f - margin - pageNumPaint.measureText(pStr), yOffset, pageNumPaint)
+                    yOffset += headerSpacing
+                    contentStartY = yOffset
+                }
+
+                drawPageHeader()
+
+                for ((word, entry) in validWords) {
+                    coroutineContext.ensureActive()
+                    val firstLetter = word.firstOrNull()?.uppercaseChar() ?: '#'
+                    val isNewSection = firstLetter != currentLetter
+
+                    val sectionHeight = if (isNewSection) 45f else 0f
+                    val wordHeaderHeight = 26f
+
+                    val posLayouts = mutableListOf<StaticLayout>()
+                    var totalWordEntryHeight = wordHeaderHeight
+
+                    for (pos in entry.pos) {
+                        val span = buildPosSpannable(pos, includeDefinitions, includeSynonyms, includeAntonyms)
+                        if (span.isNotEmpty()) {
+                            val sl = StaticLayout.Builder.obtain(span, 0, span.length, textPaint, textWidth.toInt())
+                                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                                .setLineSpacing(3f, 1f)
+                                .setIncludePad(false)
+                                .build()
+                            posLayouts.add(sl)
+                            totalWordEntryHeight += sl.height + 10f
+                        }
+                    }
+                    if (posLayouts.isEmpty()) continue
+                    totalWordEntryHeight += 14f // gap between words
+
+                    if (yOffset + sectionHeight + totalWordEntryHeight > pageBottomLimit && yOffset > contentStartY) {
+                        androidDoc.finishPage(page)
+                        vocabPageNum++
+
+                        pageInfo = PdfDocument.PageInfo.Builder(612, 792, vocabPageNum).create()
+                        page = androidDoc.startPage(pageInfo)
+                        canvas = page.canvas
+                        yOffset = 50f
+                        drawPageHeader()
+                    }
+
+                    if (firstLetter != currentLetter) {
+                        currentLetter = firstLetter
+                        val secText = "— $currentLetter —"
+                        val secWidth = sectionPaint.measureText(secText)
+                        val secX = (612f - secWidth) / 2f
+                        canvas.drawText(secText, secX, yOffset + 5f, sectionPaint)
+                        yOffset += 40f
+                    }
+
+                    canvas.drawText(word, margin, yOffset, wordPaint)
+                    var currentX = margin + wordPaint.measureText(word)
+
+                    if (entry.reference != null && !entry.reference.equals(word, ignoreCase = true)) {
+                        val refText = " (Ref: ${entry.reference})"
+                        canvas.drawText(refText, currentX, yOffset, refPaint)
+                        currentX += refPaint.measureText(refText)
+                    }
+
+                    if (entry.score != null) {
+                        val scoreText = " (" + formatScore(entry.score) + ")"
+                        canvas.drawText(scoreText, currentX, yOffset, scorePaint)
+                    }
+                    yOffset += wordHeaderHeight
+
+                    for (sl in posLayouts) {
+                        if (yOffset + sl.height > pageBottomLimit && yOffset > contentStartY) {
+                            androidDoc.finishPage(page)
+                            vocabPageNum++
+
+                            pageInfo = PdfDocument.PageInfo.Builder(612, 792, vocabPageNum).create()
+                            page = androidDoc.startPage(pageInfo)
+                            canvas = page.canvas
+                            yOffset = 50f
+                            drawPageHeader()
+
+                            val contWord = "$word (cont.)"
+                            canvas.drawText(contWord, margin, yOffset, wordPaint)
+                            var contX = margin + wordPaint.measureText(contWord)
+
+                            if (entry.reference != null && !entry.reference.equals(word, ignoreCase = true)) {
+                                val refText = " (Ref: ${entry.reference})"
+                                canvas.drawText(refText, contX, yOffset, refPaint)
+                                contX += refPaint.measureText(refText)
+                            }
+
+                            if (entry.score != null) {
+                                val scoreText = " (" + formatScore(entry.score) + ")"
+                                canvas.drawText(scoreText, contX, yOffset, scorePaint)
+                            }
+                            yOffset += wordHeaderHeight
+                        }
+
+                        canvas.save()
+                        canvas.translate(margin, yOffset)
+                        sl.draw(canvas)
+                        canvas.restore()
+
+                        yOffset += sl.height + 10f
+                    }
+
+                    yOffset += 14f
+                }
+
+                androidDoc.finishPage(page)
+            }
+
+            outputPdf.outputStream().use { os ->
+                androidDoc.writeTo(os)
+            }
+
+            outputPdf
         } finally {
             androidDoc.close()
             reader?.close()

@@ -26,7 +26,7 @@ class NumberedCanvas(canvas.Canvas):
         self.saveState()
         self.setFont("Helvetica", 9.5)
         self.setFillColor(colors.HexColor('#718096'))
-        page_text = f"PdfHelperReader v4.4.0 Manual  •  Page {self._pageNumber} of {page_count}"
+        page_text = f"PdfHelperReader v4.5.0 Manual  •  Page {self._pageNumber} of {page_count}"
         self.drawRightString(612 - 36, 20, page_text)
         self.restoreState()
 
@@ -120,7 +120,7 @@ def build_pdf(filename):
 
     # Title & Subtitle
     story.append(Paragraph("PdfHelperReader – Comprehensive User Manual", title_style))
-    story.append(Paragraph("(v4.4.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
+    story.append(Paragraph("(v4.5.0) • High-Performance Dual-Pane Reading, Refined Vocabulary Engine & Integrated Research Environment", subtitle_style))
 
     # Section 1
     story.append(Paragraph("1. Welcome & Introduction", h1_style))
@@ -190,7 +190,7 @@ def build_pdf(filename):
         ],
         [
             Paragraph("H", table_btn_style),
-            Paragraph("<b>History (Dual-Tab)</b>: Opens history dialog with two tabs: <b>Reading History</b> (tracks First Opened & Last Closed timestamps for up to 1,000 documents with Del vocab) and <b>Search History</b> (logs all past Google searches with one-tap re-search, item deletion, and Clear All). Tab selection and scroll positions are permanently preserved.", table_desc_style)
+            Paragraph("<b>History (Dual-Tab & 4-Row Layout)</b>: Opens history dialog with two tabs: <b>Reading History</b> (features 4-row layout per book showing full title, first opened, last closed, and dedicated buttons for all words, del words, del vocab, and del) and <b>Search History</b> (logs past Google searches with one-tap re-search, item deletion, and Clear All).", table_desc_style)
         ],
         [
             Paragraph("O", table_btn_style),
@@ -353,6 +353,15 @@ def build_pdf(filename):
         "• <b>Default Single-Document View</b>: The app opens cleanly by default in single document (book) mode for an expansive, focused reading layout.<br/>"
         "• <b>Seamless Google Split-Pane Return</b>: Searching Google while reading in single-document mode automatically docks Google in split view. Performing the final back gesture on Google history effortlessly returns you directly to your single-document view.<br/>"
         "• <b>Flicker-Free Google WebView & Zen Mode</b>: Google search browsing remains stable and flicker-free when scrolling document pages, and maintains active web state reliably across Zen mode transitions.",
+        body_style
+    ))
+
+    story.append(Paragraph("17. All Words Engine, Custom Content Filters & 4-Row History (v4.5.0)", h1_style))
+    story.append(Paragraph(
+        "• <b>Unique All Words Document Generator</b>: Tap <b>all words</b> in History or the Vocab dialog to extract every unique word across the entire document, sorted alphabetically with section banners (— A —, — B —). The book opens in the upper pane with the All Words document docked in the lower pane.<br/>"
+        "• <b>Content Inclusion Checked List</b>: The generation pop-up provides checkable options to choose what to include for each word: <b>Definitions</b>, <b>Synonym</b>, and <b>Antonym</b> (all checked by default). Your preferences are remembered permanently across launches.<br/>"
+        "• <b>Tiered Literary & Philosophical Google Searches</b>: Initiating a Google search dynamically crafts the ideal prompt by length: single words and short phrases (&lt; 15 words) search <i>meaning of this: \"text\"</i>, medium phrases (15–30 words) search <i>meaning of this phrase by phrase: \"text\"</i>, and extended passages (&gt; 30 words) search <i>Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"excerpt\"</i>.<br/>"
+        "• <b>4-Row Reading History & Disk Cleanup</b>: Reading history organizes each book into 4 clear rows (Row 1: Full book name without truncation; Row 2: First Opened date; Row 3: Last Closed date; Row 4: Widely-spaced action buttons: <b>all words</b>, <b>del words</b>, <b>del vocab</b>, and <b>del</b>). The dedicated <b>del words</b> button deletes companion all-words PDFs from storage cleanly.",
         body_style
     ))
 

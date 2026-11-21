@@ -1,4 +1,4 @@
-# PdfHelperReader (v4.4.0)
+# PdfHelperReader (v4.5.0)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -6,6 +6,39 @@
 [![Target SDK: 35](https://img.shields.io/badge/Target%20SDK-35-orange.svg)](https://developer.android.com)
 
 **PdfHelperReader** is a powerful, offline-first, dual-pane Android document and eBook reader built for deep reading, academic research, and foreign language acquisition. It reads both **PDF** and **EPUB** formats, automatically generates companion vocabulary sidecars, applies local on-device ML Kit OCR to scanned documents, searches Project Gutenberg's 70,000+ catalog, offers two-finger pinch-to-zoom centered on each pane, unifies multi-page highlights, includes seamless **in-app updates**, and delivers a fully synchronized dual-document reading experience with immersive Zen modes.
+
+---
+
+## 🌟 What's New in v4.5.0
+
+### 📚 Unique All Words Document Generation
+* **Complete Lexicon Extraction**: Generates an exhaustive companion PDF compiling every unique word in the document, sorted alphabetically with clean letter section banners (`— A —`, `— B —`, etc.).
+* **Automatic Split-View Docking**: Automatically opens the source book in the upper pane and docks the newly created All Words document into the lower pane for synchronized reference.
+* **Density Threshold Tuning**: Configure word frequency score threshold (0–100) before generation, or open existing pre-generated documents instantly.
+
+### ☑️ Custom Word Content Inclusion Options
+* **Checkable Field Customization**: The generation dialog features a compact horizontal checked list allowing you to toggle exactly what to include for each word:
+  - **Definitions**
+  - **Synonym**
+  - **Antonym**
+* **Active by Default**: All three options are selected by default and remembered across sessions.
+* **Compact, Space-Saving Layout**: Redesigned checked list fits cleanly on a single row, with full scroll protection to preserve dialog layout on smaller devices.
+
+### 🔎 Tiered Literary & Philosophical Google Searches
+* **Length-Aware Query Optimization**: Dynamic prompt formatting automatically adapts to the selected word count:
+  - **Short (< 15 words)**: `meaning of this: "<text>"`
+  - **Medium (15 to 30 words)**: `meaning of this phrase by phrase: "<text>"`
+  - **Long (> 30 words)**: `Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: "<phrase>"`
+
+### 🗂️ 4-Row Reading History & Disk Management
+* **Row 1**: Displays the full book title without truncation or ellipsis.
+* **Row 2**: Displays **First Opened** date and time.
+* **Row 3**: Displays **Last Closed** date and time.
+* **Row 4**: Features generously spaced action buttons:
+  - **all words**: Generates or opens the All Words document.
+  - **del words**: Deletes the companion All Words PDF from disk and refreshes the system media scanner.
+  - **del vocab**: Deletes the page-by-page vocabulary companion file.
+  - **del**: Removes the document from reading history.
 
 ---
 

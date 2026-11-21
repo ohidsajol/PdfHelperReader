@@ -428,7 +428,23 @@ object Sidecar {
     fun expectedName(bookName: String): String {
         val clean = bookName.removePrefix(".")
         val base = clean.replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\.epub$", RegexOption.IGNORE_CASE), "")
         return ".$base" + "_vocab.pdf"
+    }
+
+    /** "The_Brothers_Karamazov.pdf" -> ".The_Brothers_Karamazov_all_words.pdf" */
+    fun expectedAllWordsName(bookName: String): String {
+        val clean = bookName.removePrefix(".")
+        val base = clean.replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\.epub$", RegexOption.IGNORE_CASE), "")
+        return ".$base" + "_all_words.pdf"
+    }
+
+    fun legacyAllWordsName(bookName: String): String {
+        val clean = bookName.removePrefix(".")
+        val base = clean.replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\.epub$", RegexOption.IGNORE_CASE), "")
+        return "${base}_all_words.pdf"
     }
 
     fun canOpen(ctx: Context, uri: Uri): Boolean = try {
@@ -652,7 +668,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             .replace(Regex("\\s+"), " ")
             .trim()
         if (clean.isBlank()) return ""
-        if (clean.startsWith("meaning of this:", ignoreCase = true) ||
+        if (clean.startsWith("meaning of this phrase by phrase", ignoreCase = true) ||
+            clean.startsWith("meaning of this:", ignoreCase = true) ||
+            clean.startsWith("Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase:", ignoreCase = true) ||
             clean.startsWith("Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase:", ignoreCase = true) ||
             clean.startsWith("give me meaning of this phrase by phrase if the following text is not too long else sentence by sentence:", ignoreCase = true) ||
             clean.startsWith("meaning of this part by part:", ignoreCase = true)) {
@@ -660,10 +678,16 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         }
         val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
         val stripped = clean.trim('"', '“', '”', '\'', '‘', '’')
-        return if (words.size > 1) {
-            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$stripped\""
-        } else {
-            "meaning of this: \"$stripped\""
+        return when {
+            words.size > 30 -> {
+                "Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$stripped\""
+            }
+            words.size >= 15 -> {
+                "meaning of this phrase by phrase: \"$stripped\""
+            }
+            else -> {
+                "meaning of this: \"$stripped\""
+            }
         }
     }
 
@@ -1223,6 +1247,55 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
         }
     }
 
+    fun openBookAndVocab(targetBookUri: Uri, targetBookName: String?, targetVocabUri: Uri, targetVocabPage: Int = 0) {
+        val resolved = resolveFileUri(targetBookUri, targetBookName)
+        persist(resolved)
+        persist(targetVocabUri)
+        closeDialogsRequest++
+        scope.launch {
+            val hashKey = computeHash(ctx, resolved)
+            lock.withLock {
+                closePane(book); closePane(vocab)
+                vocab.message = null; vocab.name = null; expectedVocab = null
+                bookUri = resolved
+                bookKey = hashKey
+                book.message = null
+                book.name = targetBookName ?: withContext(Dispatchers.IO) { Sidecar.displayName(ctx, resolved) }
+                    ?: resolved.lastPathSegment ?: "book.pdf"
+                addToHistory(resolved, book.name ?: "Unknown")
+
+                try {
+                    val doc = withContext(Dispatchers.IO) { PdfDoc.open(ctx, resolved) }
+                    if (doc.pageCount < 1) { doc.close(); throw IOException("The PDF has no pages") }
+                    book.page = getIntPref("book_page_$bookKey", 0).coerceIn(0, doc.pageCount - 1)
+                    book.doc = doc
+                    book.uri = resolved
+                    isBookEpub = isCurrentBookEpub()
+                    editPrefs { putString("last_book_uri", resolved.toString()) }
+                    loadBookmarks()
+                    loadHighlights()
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    book.message = describe(e)
+                }
+
+                try {
+                    val vDoc = withContext(Dispatchers.IO) { PdfDoc.open(ctx, targetVocabUri) }
+                    if (vDoc.pageCount < 1) { vDoc.close(); throw IOException("The vocabulary PDF has no pages") }
+                    vocab.name = withContext(Dispatchers.IO) { Sidecar.displayName(ctx, targetVocabUri) }
+                        ?: targetVocabUri.lastPathSegment ?: "all_words.pdf"
+                    vocab.page = targetVocabPage.coerceIn(0, vDoc.pageCount - 1)
+                    vocab.doc = vDoc
+                    vocab.uri = targetVocabUri
+                    editPrefs { putString("vocab_uri_$bookKey", targetVocabUri.toString()) }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    vocab.message = describe(e)
+                }
+            }
+        }
+    }
+
     private suspend fun loadVocabCustom(uri: Uri, targetPage: Int? = null) {
         closePane(vocab)
         val expected = expectedVocab ?: Sidecar.expectedName(book.name ?: "book.pdf")
@@ -1246,11 +1319,34 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
     fun deleteAssociatedVocab(entry: HistoryEntry): Boolean {
         val expectedName = Sidecar.expectedName(entry.name)
+        val legacyExpected = entry.name.removePrefix(".").replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "") + "_vocab.pdf"
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val vocabFile = File(downloadsDir, "PdfHelperReader_files/$expectedName")
+        val legacyVocabFile = File(downloadsDir, "PdfHelperReader_files/$legacyExpected")
+
+        var anyDeleted = false
+        val deletedPaths = mutableListOf<String>()
+        if (vocabFile.exists()) {
+            if (vocabFile.delete()) {
+                anyDeleted = true
+                deletedPaths.add(vocabFile.absolutePath)
+            }
+        }
+        if (legacyVocabFile.exists()) {
+            if (legacyVocabFile.delete()) {
+                anyDeleted = true
+                deletedPaths.add(legacyVocabFile.absolutePath)
+            }
+        }
+        if (deletedPaths.isNotEmpty()) {
+            android.media.MediaScannerConnection.scanFile(
+                ctx, deletedPaths.toTypedArray(), arrayOf("application/pdf"), null
+            )
+        }
 
         val vocabUriStr = vocab.uri?.toString() ?: ""
-        val isCurrentlyLoaded = vocabUriStr.contains(expectedName) || vocab.name == expectedName
+        val isCurrentlyLoaded = vocabUriStr.contains(expectedName) || vocab.name == expectedName ||
+                vocabUriStr.contains(legacyExpected) || vocab.name == legacyExpected
         if (isCurrentlyLoaded) {
             scope.launch {
                 lock.withLock {
@@ -1266,16 +1362,50 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
             editPrefs { remove("vocab_pagemap_$bookKey") }
         }
 
-        if (vocabFile.exists()) {
-            val deleted = vocabFile.delete()
-            if (deleted) {
-                android.media.MediaScannerConnection.scanFile(
-                    ctx, arrayOf(vocabFile.absolutePath), arrayOf("application/pdf"), null
-                )
+        return anyDeleted
+    }
+
+    fun deleteAssociatedAllWords(entry: HistoryEntry): Boolean {
+        val expectedName = Sidecar.expectedAllWordsName(entry.name)
+        val legacyExpected = Sidecar.legacyAllWordsName(entry.name)
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val allWordsFile = File(downloadsDir, "PdfHelperReader_files/$expectedName")
+        val legacyAllWordsFile = File(downloadsDir, "PdfHelperReader_files/$legacyExpected")
+
+        var anyDeleted = false
+        val deletedPaths = mutableListOf<String>()
+        if (allWordsFile.exists()) {
+            if (allWordsFile.delete()) {
+                anyDeleted = true
+                deletedPaths.add(allWordsFile.absolutePath)
             }
-            return deleted
         }
-        return false
+        if (legacyAllWordsFile.exists()) {
+            if (legacyAllWordsFile.delete()) {
+                anyDeleted = true
+                deletedPaths.add(legacyAllWordsFile.absolutePath)
+            }
+        }
+        if (deletedPaths.isNotEmpty()) {
+            android.media.MediaScannerConnection.scanFile(
+                ctx, deletedPaths.toTypedArray(), arrayOf("application/pdf"), null
+            )
+        }
+
+        val vocabUriStr = vocab.uri?.toString() ?: ""
+        val isCurrentlyLoaded = vocabUriStr.contains(expectedName) || vocab.name == expectedName ||
+                vocabUriStr.contains(legacyExpected) || vocab.name == legacyExpected
+        if (isCurrentlyLoaded) {
+            scope.launch {
+                lock.withLock {
+                    closePane(vocab)
+                    vocab.message = "All words file deleted."
+                    vocab.name = expectedName
+                }
+            }
+        }
+
+        return anyDeleted
     }
     
     fun getBookUri(): Uri? = bookUri
@@ -1316,6 +1446,9 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     fun generateVocab(
         pageRange: IntRange? = null,
         maxScoreThreshold: Float = 100f,
+        includeDefinitions: Boolean = true,
+        includeSynonyms: Boolean = true,
+        includeAntonyms: Boolean = true,
         onProgress: (Int, Int) -> Unit,
         onDone: (VocabResult) -> Unit,
         onError: (Exception) -> Unit
@@ -1341,7 +1474,10 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
 
                 val outputPdf = File(ctx.cacheDir, "vocab_output_${System.currentTimeMillis()}.pdf")
 
-                val result = VocabGenerator.generate(ctx, inputPdf, outputPdf, pageRange, maxScoreThreshold) { current, total ->
+                val result = VocabGenerator.generate(
+                    ctx, inputPdf, outputPdf, pageRange, maxScoreThreshold,
+                    includeDefinitions, includeSynonyms, includeAntonyms
+                ) { current, total ->
                     if (coroutineContext.isActive) {
                         scope.launch(Dispatchers.Main) {
                             onProgress(current, total)
@@ -1363,6 +1499,103 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
                         onError(err)
                     }
                 }
+            }
+        }
+    }
+
+    fun generateAllWords(
+        targetBookUri: Uri,
+        targetBookName: String,
+        maxScoreThreshold: Float = 100f,
+        includeDefinitions: Boolean = true,
+        includeSynonyms: Boolean = true,
+        includeAntonyms: Boolean = true,
+        onProgress: (Int, Int) -> Unit,
+        onDone: (File) -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        val oldJob = vocabJob
+        vocabJob = scope.launch(Dispatchers.IO) {
+            oldJob?.cancel()
+            oldJob?.join()
+            var inputPdf: File? = null
+            try {
+                inputPdf = File.createTempFile("book_all_words_in", ".pdf", ctx.cacheDir)
+                val resolved = resolveFileUri(targetBookUri, targetBookName)
+
+                if (EpubParser.isEpub(ctx, resolved)) {
+                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    val targetDir = File(downloadsDir, "PdfHelperReader_files")
+                    if (!targetDir.exists()) targetDir.mkdirs()
+                    val rawName = Sidecar.displayName(ctx, resolved) ?: targetBookName
+                    val cleanBase = rawName.removePrefix(".").replace(Regex("\\.epub$", RegexOption.IGNORE_CASE), "")
+                    val epubConvertedFile = File(targetDir, "epub_$cleanBase.pdf")
+                    if (!epubConvertedFile.exists() || epubConvertedFile.length() < 1000) {
+                        val input = ctx.contentResolver.openInputStream(resolved)
+                            ?: throw FileNotFoundException("Cannot open EPUB stream for $resolved")
+                        val epubBook = input.use { EpubParser.parseEpub(it) }
+                        EpubParser.convertEpubToPdf(epubBook, epubConvertedFile)
+                        android.media.MediaScannerConnection.scanFile(
+                            ctx, arrayOf(epubConvertedFile.absolutePath), arrayOf("application/pdf"), null
+                        )
+                    }
+                    epubConvertedFile.inputStream().use { i ->
+                        inputPdf.outputStream().use { o -> i.copyTo(o) }
+                    }
+                } else {
+                    val stream = if (resolved.scheme == "file") {
+                        val f = File(resolved.path!!)
+                        if (f.exists()) f.inputStream() else ctx.contentResolver.openInputStream(resolved)
+                    } else {
+                        ctx.contentResolver.openInputStream(resolved)
+                    } ?: throw FileNotFoundException("Cannot open input stream for $resolved")
+                    stream.use { i ->
+                        inputPdf.outputStream().use { o -> i.copyTo(o) }
+                    }
+                }
+
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val vocabDir = File(downloadsDir, "PdfHelperReader_files")
+                if (!vocabDir.exists()) vocabDir.mkdirs()
+
+                val expectedAllWordsName = Sidecar.expectedAllWordsName(targetBookName)
+                val tempOutputPdf = File(ctx.cacheDir, "all_words_output_${System.currentTimeMillis()}.pdf")
+
+                VocabGenerator.generateAllWords(
+                    ctx, inputPdf, tempOutputPdf, maxScoreThreshold,
+                    includeDefinitions, includeSynonyms, includeAntonyms
+                ) { current, total ->
+                    if (coroutineContext.isActive) {
+                        scope.launch(Dispatchers.Main) {
+                            onProgress(current, total)
+                        }
+                    }
+                }
+
+                val destFile = File(vocabDir, expectedAllWordsName)
+                if (destFile.exists()) destFile.delete()
+                tempOutputPdf.copyTo(destFile, overwrite = true)
+                tempOutputPdf.delete()
+
+                android.media.MediaScannerConnection.scanFile(
+                    ctx, arrayOf(destFile.absolutePath), arrayOf("application/pdf"), null
+                )
+
+                if (coroutineContext.isActive) {
+                    withContext(Dispatchers.Main) {
+                        onDone(destFile)
+                    }
+                }
+            } catch (t: Throwable) {
+                t.rethrowIfFatal()
+                if (coroutineContext.isActive) {
+                    val err = t.toRecoverableException()
+                    withContext(Dispatchers.Main) {
+                        onError(err)
+                    }
+                }
+            } finally {
+                inputPdf?.delete()
             }
         }
     }
@@ -2059,6 +2292,7 @@ fun ReaderScreen(reader: Reader) {
     }
 
     var isGenerating by remember { mutableStateOf(false) }
+    var generatingTitle by remember { mutableStateOf("Generating Vocabulary PDF...") }
     var generatedFile by remember { mutableStateOf<File?>(null) }
     var genProgressCurrent by remember { mutableIntStateOf(0) }
     var genProgressTotal by remember { mutableIntStateOf(0) }
@@ -2082,6 +2316,7 @@ fun ReaderScreen(reader: Reader) {
     var showBookmarks by remember { mutableStateOf(false) }
     var showHighlights by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var historyAllWordsTarget by remember { mutableStateOf<HistoryEntry?>(null) }
     val readingHistoryListState = rememberLazyListState()
     val searchHistoryListState = rememberLazyListState()
     val ribbonScrollState = rememberScrollState(initial = reader.ribbonScrollOffset)
@@ -2300,13 +2535,14 @@ fun ReaderScreen(reader: Reader) {
         }
     }
 
-    val executeGenerateVocab: (Float) -> Unit = { threshold ->
+    val executeGenerateVocab: (Float, Boolean, Boolean, Boolean) -> Unit = { threshold, defs, syns, ants ->
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val vocabDir = File(downloadsDir, "PdfHelperReader_files")
         val expectedName = reader.expectedVocab ?: "vocab.pdf"
         val currentBookPage = reader.book.page + 1
 
         isGenerating = true
+        generatingTitle = "Generating Vocabulary PDF..."
         genProgressCurrent = 0
         genProgressTotal = 0
 
@@ -2315,6 +2551,9 @@ fun ReaderScreen(reader: Reader) {
         reader.generateVocab(
             pageRange = null,
             maxScoreThreshold = threshold,
+            includeDefinitions = defs,
+            includeSynonyms = syns,
+            includeAntonyms = ants,
             onProgress = { c, t -> 
                 genProgressCurrent = c
                 genProgressTotal = t
@@ -2350,6 +2589,90 @@ fun ReaderScreen(reader: Reader) {
             onError = {
                 isGenerating = false
                 Toast.makeText(ctx, "Generation error: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        )
+    }
+
+    val executeGenerateAllWordsForCurrentBook: (Float, Boolean, Boolean, Boolean) -> Unit = { threshold, defs, syns, ants ->
+        val uri = reader.getBookUri() ?: reader.book.uri
+        val name = reader.book.name ?: "book.pdf"
+        if (uri == null) {
+            Toast.makeText(ctx, "Please open a book first", Toast.LENGTH_SHORT).show()
+        } else {
+            if (splitMode != SplitMode.SPLIT_BOTH) {
+                splitMode = SplitMode.SPLIT_BOTH
+            }
+            reader.vocabMode = VocabMode.VOCAB_PDF
+
+            isGenerating = true
+            generatingTitle = "Generating All Words PDF..."
+            genProgressCurrent = 0
+            genProgressTotal = 0
+
+            Toast.makeText(ctx, "Generating All Words PDF (score ≤ ${threshold.toInt()})...", Toast.LENGTH_SHORT).show()
+
+            reader.generateAllWords(
+                targetBookUri = uri,
+                targetBookName = name,
+                maxScoreThreshold = threshold,
+                includeDefinitions = defs,
+                includeSynonyms = syns,
+                includeAntonyms = ants,
+                onProgress = { c, t ->
+                    genProgressCurrent = c
+                    genProgressTotal = t
+                },
+                onDone = { destFile ->
+                    reader.onVocabPicked(Uri.fromFile(destFile), targetPage = 0)
+                    isGenerating = false
+                    Toast.makeText(ctx, "All Words document generated and loaded!", Toast.LENGTH_SHORT).show()
+                },
+                onError = { e ->
+                    isGenerating = false
+                    Toast.makeText(ctx, "Generation error: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+    }
+
+    val executeGenerateAllWordsForHistory: (HistoryEntry, Float, Boolean, Boolean, Boolean) -> Unit = { h, threshold, defs, syns, ants ->
+        if (splitMode != SplitMode.SPLIT_BOTH) {
+            splitMode = SplitMode.SPLIT_BOTH
+        }
+        reader.vocabMode = VocabMode.VOCAB_PDF
+
+        val bookUri = Uri.parse(h.uri)
+        val currentBookUriStr = reader.book.uri?.toString() ?: ""
+        if (currentBookUriStr != h.uri || reader.book.doc == null) {
+            reader.onBookPicked(bookUri, h.name)
+        }
+
+        isGenerating = true
+        generatingTitle = "Generating All Words PDF..."
+        genProgressCurrent = 0
+        genProgressTotal = 0
+
+        Toast.makeText(ctx, "Generating All Words PDF for \"${h.name}\" (score ≤ ${threshold.toInt()})...", Toast.LENGTH_SHORT).show()
+
+        reader.generateAllWords(
+            targetBookUri = bookUri,
+            targetBookName = h.name,
+            maxScoreThreshold = threshold,
+            includeDefinitions = defs,
+            includeSynonyms = syns,
+            includeAntonyms = ants,
+            onProgress = { c, t ->
+                genProgressCurrent = c
+                genProgressTotal = t
+            },
+            onDone = { destFile ->
+                reader.onVocabPicked(Uri.fromFile(destFile), targetPage = 0)
+                isGenerating = false
+                Toast.makeText(ctx, "All Words document generated and loaded!", Toast.LENGTH_SHORT).show()
+            },
+            onError = { e ->
+                isGenerating = false
+                Toast.makeText(ctx, "Generation error: ${e.message}", Toast.LENGTH_LONG).show()
             }
         )
     }
@@ -2391,6 +2714,7 @@ fun ReaderScreen(reader: Reader) {
                         pickVocab = pickVocab,
                         pickTree = pickTree,
                         isGenerating = isGenerating,
+                        generatingTitle = generatingTitle,
                         generatedFile = generatedFile,
                         genProgressCurrent = genProgressCurrent,
                         genProgressTotal = genProgressTotal,
@@ -3043,42 +3367,93 @@ fun ReaderScreen(reader: Reader) {
                                             java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
                                         }
 
-                                        Row(
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable {
-                                                    reader.onBookPicked(Uri.parse(h.uri), h.name)
-                                                    showHistory = false
-                                                }
-                                                .padding(vertical = 10.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                                .padding(vertical = 8.dp)
                                         ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(h.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Spacer(Modifier.height(2.dp))
-                                                Text("First Opened: $firstOpenedStr", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                                Text("Last Closed: $lastClosedStr", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                                            }
-                                            Spacer(Modifier.width(8.dp))
-                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                if (!isTutorial) {
-                                                    TextButton(onClick = {
-                                                        val deleted = reader.deleteAssociatedVocab(h)
-                                                        if (deleted) {
-                                                            Toast.makeText(ctx, "Vocab file deleted", Toast.LENGTH_SHORT).show()
-                                                        } else {
-                                                            Toast.makeText(ctx, "No vocab file found to delete", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    }) {
-                                                        Text("Del vocab", style = MaterialTheme.typography.labelSmall)
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        reader.onBookPicked(Uri.parse(h.uri), h.name)
+                                                        showHistory = false
                                                     }
-                                                    TextButton(onClick = { reader.removeFromHistory(h) }) {
-                                                        Text("Del", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                                            ) {
+                                                // First row: full name of the book
+                                                Text(
+                                                    h.name,
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                                Spacer(Modifier.height(3.dp))
+                                                // Second row: first opened
+                                                Text(
+                                                    "First Opened: $firstOpenedStr",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                // Third row: last closed
+                                                Text(
+                                                    "Last Closed: $lastClosedStr",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.outline,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
+                                            // Fourth row: buttons with bigger gaps
+                                            if (!isTutorial) {
+                                                Spacer(Modifier.height(6.dp))
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    TextButton(
+                                                        onClick = { historyAllWordsTarget = h },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("all words", style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                    TextButton(
+                                                        onClick = {
+                                                            val deleted = reader.deleteAssociatedAllWords(h)
+                                                            if (deleted) {
+                                                                Toast.makeText(ctx, "All words file deleted", Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(ctx, "No all words file found to delete", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("del words", style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                    TextButton(
+                                                        onClick = {
+                                                            val deleted = reader.deleteAssociatedVocab(h)
+                                                            if (deleted) {
+                                                                Toast.makeText(ctx, "Vocab file deleted", Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(ctx, "No vocab file found to delete", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("del vocab", style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                    TextButton(
+                                                        onClick = { reader.removeFromHistory(h) },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("del", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                                                     }
                                                 }
                                             }
                                         }
+                                        HorizontalDivider()
                                     }
                                 }
                             }
@@ -3221,6 +3596,13 @@ fun ReaderScreen(reader: Reader) {
                 val vocabDir = File(downloadsDir, "PdfHelperReader_files")
                 val expectedName = reader.expectedVocab ?: "vocab.pdf"
                 val existingFile = File(vocabDir, expectedName)
+
+                val bookName = reader.book.name ?: "book.pdf"
+                val expectedAllWordsName = Sidecar.expectedAllWordsName(bookName)
+                val legacyAllWordsName = Sidecar.legacyAllWordsName(bookName)
+                val existingAllWordsFile = File(vocabDir, expectedAllWordsName).takeIf { it.exists() && it.length() > 0 }
+                    ?: File(vocabDir, legacyAllWordsName).takeIf { it.exists() && it.length() > 0 }
+
                 val prefs = remember { ctx.getSharedPreferences("dual_pdf_reader", Context.MODE_PRIVATE) }
                 val savedThreshold = try {
                     prefs.getFloat("last_vocab_threshold", 37f)
@@ -3232,19 +3614,111 @@ fun ReaderScreen(reader: Reader) {
                     }
                 }
 
+                val savedDefs = prefs.getBoolean("vocab_include_definitions", true)
+                val savedSyns = prefs.getBoolean("vocab_include_synonyms", true)
+                val savedAnts = prefs.getBoolean("vocab_include_antonyms", true)
+
                 VocabThresholdDialog(
                     initialThreshold = savedThreshold,
+                    initialIncludeDefinitions = savedDefs,
+                    initialIncludeSynonyms = savedSyns,
+                    initialIncludeAntonyms = savedAnts,
                     existingFileExists = existingFile.exists(),
+                    existingAllWordsExists = existingAllWordsFile != null,
+                    dialogTitle = "Generate Vocabulary / All Words PDF",
+                    confirmButtonText = "Vocab PDF",
                     onDismiss = { showVocabThresholdDialog = false },
-                    onGenerate = { selectedThreshold ->
+                    onGenerate = { selectedThreshold, defs, syns, ants ->
                         showVocabThresholdDialog = false
-                        prefs.edit().remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold).apply()
-                        executeGenerateVocab(selectedThreshold)
+                        prefs.edit()
+                            .remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold)
+                            .putBoolean("vocab_include_definitions", defs)
+                            .putBoolean("vocab_include_synonyms", syns)
+                            .putBoolean("vocab_include_antonyms", ants)
+                            .apply()
+                        executeGenerateVocab(selectedThreshold, defs, syns, ants)
+                    },
+                    onGenerateAllWords = { selectedThreshold, defs, syns, ants ->
+                        showVocabThresholdDialog = false
+                        prefs.edit()
+                            .remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold)
+                            .putBoolean("vocab_include_definitions", defs)
+                            .putBoolean("vocab_include_synonyms", syns)
+                            .putBoolean("vocab_include_antonyms", ants)
+                            .apply()
+                        executeGenerateAllWordsForCurrentBook(selectedThreshold, defs, syns, ants)
                     },
                     onOpenExisting = {
                         showVocabThresholdDialog = false
                         Toast.makeText(ctx, "Opening existing vocab file...", Toast.LENGTH_SHORT).show()
                         reader.onVocabPicked(Uri.fromFile(existingFile))
+                    },
+                    onOpenExistingAllWords = existingAllWordsFile?.let { file ->
+                        {
+                            showVocabThresholdDialog = false
+                            Toast.makeText(ctx, "Opening existing all words file...", Toast.LENGTH_SHORT).show()
+                            reader.onVocabPicked(Uri.fromFile(file), targetPage = 0)
+                        }
+                    }
+                )
+            }
+
+            if (historyAllWordsTarget != null) {
+                val h = historyAllWordsTarget!!
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val vocabDir = File(downloadsDir, "PdfHelperReader_files")
+                val expectedName = Sidecar.expectedAllWordsName(h.name)
+                val legacyName = Sidecar.legacyAllWordsName(h.name)
+                val existingFile = File(vocabDir, expectedName).takeIf { it.exists() && it.length() > 0 }
+                    ?: File(vocabDir, legacyName).takeIf { it.exists() && it.length() > 0 }
+
+                val prefs = remember { ctx.getSharedPreferences("dual_pdf_reader", Context.MODE_PRIVATE) }
+                val savedThreshold = try {
+                    prefs.getFloat("last_vocab_threshold", 37f)
+                } catch (_: Exception) {
+                    37f
+                }
+                val savedDefs = prefs.getBoolean("vocab_include_definitions", true)
+                val savedSyns = prefs.getBoolean("vocab_include_synonyms", true)
+                val savedAnts = prefs.getBoolean("vocab_include_antonyms", true)
+
+                VocabThresholdDialog(
+                    initialThreshold = savedThreshold,
+                    initialIncludeDefinitions = savedDefs,
+                    initialIncludeSynonyms = savedSyns,
+                    initialIncludeAntonyms = savedAnts,
+                    existingFileExists = existingFile != null,
+                    dialogTitle = "All Words for \"${h.name}\"",
+                    confirmButtonText = "Generate",
+                    onDismiss = { historyAllWordsTarget = null },
+                    onGenerate = { selectedThreshold, defs, syns, ants ->
+                        historyAllWordsTarget = null
+                        showHistory = false
+                        prefs.edit()
+                            .remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold)
+                            .putBoolean("vocab_include_definitions", defs)
+                            .putBoolean("vocab_include_synonyms", syns)
+                            .putBoolean("vocab_include_antonyms", ants)
+                            .apply()
+                        executeGenerateAllWordsForHistory(h, selectedThreshold, defs, syns, ants)
+                    },
+                    onOpenExisting = existingFile?.let { file ->
+                        {
+                            historyAllWordsTarget = null
+                            showHistory = false
+                            if (splitMode != SplitMode.SPLIT_BOTH) {
+                                splitMode = SplitMode.SPLIT_BOTH
+                            }
+                            reader.vocabMode = VocabMode.VOCAB_PDF
+                            val bookUri = Uri.parse(h.uri)
+                            val currentBookUriStr = reader.book.uri?.toString() ?: ""
+                            if (currentBookUriStr == h.uri && reader.book.doc != null) {
+                                reader.onVocabPicked(Uri.fromFile(file), targetPage = 0)
+                            } else {
+                                reader.openBookAndVocab(bookUri, h.name, Uri.fromFile(file), targetVocabPage = 0)
+                            }
+                            Toast.makeText(ctx, "All Words document loaded", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             }
@@ -3640,6 +4114,7 @@ fun ReaderScreen(reader: Reader) {
                     pickVocab = pickVocab,
                     pickTree = pickTree,
                     isGenerating = isGenerating,
+                    generatingTitle = generatingTitle,
                     generatedFile = generatedFile,
                     genProgressCurrent = genProgressCurrent,
                     genProgressTotal = genProgressTotal,
@@ -3752,6 +4227,7 @@ fun DocumentPanesLayout(
     pickVocab: androidx.activity.result.ActivityResultLauncher<Array<String>>,
     pickTree: androidx.activity.result.ActivityResultLauncher<Uri?>,
     isGenerating: Boolean,
+    generatingTitle: String = "Generating Vocabulary PDF...",
     generatedFile: File?,
     genProgressCurrent: Int,
     genProgressTotal: Int,
@@ -3780,7 +4256,7 @@ fun DocumentPanesLayout(
             Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                 Card {
                     Column(Modifier.padding(24.dp).fillMaxWidth(0.8f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Generating Vocabulary PDF...", style = MaterialTheme.typography.titleSmall)
+                        Text(generatingTitle, style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(16.dp))
                         if (genProgressTotal > 0) {
                             val progress = genProgressCurrent.toFloat() / genProgressTotal
@@ -3790,11 +4266,11 @@ fun DocumentPanesLayout(
                                 modifier = Modifier.fillMaxWidth().height(8.dp)
                             )
                             Spacer(Modifier.height(8.dp))
-                            Text("Generating Vocab PDF: $percentage% ($genProgressCurrent/$genProgressTotal)", style = MaterialTheme.typography.bodySmall)
+                            Text("$generatingTitle: $percentage% ($genProgressCurrent/$genProgressTotal)", style = MaterialTheme.typography.bodySmall)
                         } else {
                             CircularProgressIndicator()
                             Spacer(Modifier.height(16.dp))
-                            Text("Generating Vocab PDF: 0%", style = MaterialTheme.typography.bodySmall)
+                            Text(generatingTitle, style = MaterialTheme.typography.bodySmall)
                         }
                         Spacer(Modifier.height(16.dp))
                         OutlinedButton(onClick = onCancelVocab) {
@@ -5625,27 +6101,41 @@ fun WordSynonymAntonymPopup(
 @Composable
 fun VocabThresholdDialog(
     initialThreshold: Float,
+    initialIncludeDefinitions: Boolean = true,
+    initialIncludeSynonyms: Boolean = true,
+    initialIncludeAntonyms: Boolean = true,
     existingFileExists: Boolean,
+    existingAllWordsExists: Boolean = false,
+    dialogTitle: String = "Generate Vocabulary / All Words PDF",
+    confirmButtonText: String = "Vocab PDF",
     onDismiss: () -> Unit,
-    onGenerate: (Float) -> Unit,
-    onOpenExisting: (() -> Unit)? = null
+    onGenerate: (threshold: Float, includeDefs: Boolean, includeSyns: Boolean, includeAnts: Boolean) -> Unit,
+    onGenerateAllWords: ((threshold: Float, includeDefs: Boolean, includeSyns: Boolean, includeAnts: Boolean) -> Unit)? = null,
+    onOpenExisting: (() -> Unit)? = null,
+    onOpenExistingAllWords: (() -> Unit)? = null
 ) {
     var threshold by remember { mutableFloatStateOf(initialThreshold.coerceIn(0f, 100f)) }
+    var includeDefinitions by remember { mutableStateOf(initialIncludeDefinitions) }
+    var includeSynonyms by remember { mutableStateOf(initialIncludeSynonyms) }
+    var includeAntonyms by remember { mutableStateOf(initialIncludeAntonyms) }
+
+    val hasAnySelection = includeDefinitions || includeSynonyms || includeAntonyms
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Generate Vocabulary PDF", fontWeight = FontWeight.Bold)
+            Text(dialogTitle, fontWeight = FontWeight.Bold)
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "Select maximum wordfreq score threshold (0 - 100). Words with score ≤ threshold will be included in the vocabulary document.",
+                    text = "Select maximum wordfreq score threshold (0 - 100). Words with score ≤ threshold will be included in the document.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -5659,7 +6149,7 @@ fun VocabThresholdDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -5671,7 +6161,7 @@ fun VocabThresholdDialog(
                             )
                             Text(
                                 text = "${threshold.roundToInt()}",
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
@@ -5745,9 +6235,84 @@ fun VocabThresholdDialog(
                     }
                 }
 
-                if (existingFileExists) {
+                // Compact Checked list: What to include in the document for each word
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
-                        text = "An existing vocab file exists and will be regenerated.",
+                        text = "Include in document:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { includeDefinitions = !includeDefinitions }
+                                .padding(end = 2.dp)
+                        ) {
+                            Checkbox(
+                                checked = includeDefinitions,
+                                onCheckedChange = { includeDefinitions = it },
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Definitions", style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp))
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { includeSynonyms = !includeSynonyms }
+                                .padding(end = 2.dp)
+                        ) {
+                            Checkbox(
+                                checked = includeSynonyms,
+                                onCheckedChange = { includeSynonyms = it },
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Synonym", style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp))
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { includeAntonyms = !includeAntonyms }
+                                .padding(end = 2.dp)
+                        ) {
+                            Checkbox(
+                                checked = includeAntonyms,
+                                onCheckedChange = { includeAntonyms = it },
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Antonym", style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp))
+                        }
+                    }
+                }
+
+                if (!hasAnySelection) {
+                    Text(
+                        text = "Please select at least one option (Definitions, Synonym, or Antonym).",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                if (existingFileExists && !existingAllWordsExists) {
+                    Text(
+                        text = "An existing file exists and will be regenerated.",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else if (existingFileExists || existingAllWordsExists) {
+                    Text(
+                        text = "Existing file(s) exist and will be regenerated.",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.error
                     )
@@ -5755,15 +6320,33 @@ fun VocabThresholdDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onGenerate(threshold) }) {
-                Text("Generate")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onGenerateAllWords != null) {
+                    OutlinedButton(
+                        onClick = { onGenerateAllWords(threshold, includeDefinitions, includeSynonyms, includeAntonyms) },
+                        enabled = hasAnySelection
+                    ) {
+                        Text("All Words")
+                    }
+                }
+                Button(
+                    onClick = { onGenerate(threshold, includeDefinitions, includeSynonyms, includeAntonyms) },
+                    enabled = hasAnySelection
+                ) {
+                    Text(confirmButtonText)
+                }
             }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (existingFileExists && onOpenExisting != null) {
                     OutlinedButton(onClick = onOpenExisting) {
-                        Text("Open Existing")
+                        Text(if (onGenerateAllWords != null) "Open Vocab" else "Open Existing")
+                    }
+                }
+                if (existingAllWordsExists && onOpenExistingAllWords != null) {
+                    OutlinedButton(onClick = onOpenExistingAllWords) {
+                        Text("Open All Words")
                     }
                 }
                 TextButton(onClick = onDismiss) {

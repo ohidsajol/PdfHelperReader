@@ -19,7 +19,9 @@ class SelectionAndSearchTest {
             .replace(Regex("\\s+"), " ")
             .trim()
         if (clean.isBlank()) return ""
-        if (clean.startsWith("meaning of this:", ignoreCase = true) ||
+        if (clean.startsWith("meaning of this phrase by phrase", ignoreCase = true) ||
+            clean.startsWith("meaning of this:", ignoreCase = true) ||
+            clean.startsWith("Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase:", ignoreCase = true) ||
             clean.startsWith("Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase:", ignoreCase = true) ||
             clean.startsWith("give me meaning of this phrase by phrase if the following text is not too long else sentence by sentence:", ignoreCase = true) ||
             clean.startsWith("meaning of this part by part:", ignoreCase = true)) {
@@ -27,33 +29,65 @@ class SelectionAndSearchTest {
         }
         val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
         val stripped = clean.trim('"', '“', '”', '\'', '‘', '’')
-        return if (words.size > 1) {
-            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$stripped\""
-        } else {
-            "meaning of this: \"$stripped\""
+        return when {
+            words.size > 30 -> {
+                "Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$stripped\""
+            }
+            words.size >= 15 -> {
+                "meaning of this phrase by phrase: \"$stripped\""
+            }
+            else -> {
+                "meaning of this: \"$stripped\""
+            }
         }
     }
 
     @Test
-    fun testFormatGoogleSearchQuerySingleWord() {
+    fun testFormatGoogleSearchQueryUnder15Words() {
+        // Single word
         assertEquals("meaning of this: \"apple\"", formatGoogleSearchQuery("apple"))
         assertEquals("meaning of this: \"ephemeral\"", formatGoogleSearchQuery("  ephemeral  "))
         assertEquals("meaning of this: \"ubiquitous\"", formatGoogleSearchQuery("\"ubiquitous\""))
+
+        // Short phrases (< 15 words)
+        assertEquals("meaning of this: \"break a leg\"", formatGoogleSearchQuery("  \"break a leg\"  "))
+        assertEquals("meaning of this: \"in the midst of sorrow\"", formatGoogleSearchQuery("in the midst of sorrow"))
+        assertEquals("meaning of this: \"multiple words with newline\"", formatGoogleSearchQuery("multiple\nwords\twith\nnewline"))
+
+        // Exactly 14 words
+        val words14 = (1..14).joinToString(" ") { "word$it" }
+        assertEquals("meaning of this: \"$words14\"", formatGoogleSearchQuery(words14))
     }
 
     @Test
-    fun testFormatGoogleSearchQueryMultiWord() {
+    fun testFormatGoogleSearchQueryBetween15And30Words() {
+        // Exactly 15 words
+        val words15 = (1..15).joinToString(" ") { "word$it" }
+        assertEquals("meaning of this phrase by phrase: \"$words15\"", formatGoogleSearchQuery(words15))
+
+        // Mid-range (20 words)
+        val words20 = (1..20).joinToString(" ") { "token$it" }
+        assertEquals("meaning of this phrase by phrase: \"$words20\"", formatGoogleSearchQuery(words20))
+
+        // Exactly 30 words
+        val words30 = (1..30).joinToString(" ") { "item$it" }
+        assertEquals("meaning of this phrase by phrase: \"$words30\"", formatGoogleSearchQuery(words30))
+    }
+
+    @Test
+    fun testFormatGoogleSearchQueryAbove30Words() {
+        // 31 words
+        val words31 = (1..31).joinToString(" ") { "term$it" }
         assertEquals(
-            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"in the midst of sorrow\"",
-            formatGoogleSearchQuery("in the midst of sorrow")
+            "Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$words31\"",
+            formatGoogleSearchQuery(words31)
         )
+
+        // 45 words
+        val words45 = (1..45).joinToString(" ") { "stanza$it" }
         assertEquals(
-            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"break a leg\"",
-            formatGoogleSearchQuery("  \"break a leg\"  ")
-        )
-        assertEquals(
-            "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"multiple words with newline\"",
-            formatGoogleSearchQuery("multiple\nwords\twith\nnewline")
+            "Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"$words45\"",
+            formatGoogleSearchQuery(words45)
         )
     }
 
@@ -61,10 +95,14 @@ class SelectionAndSearchTest {
     fun testFormatGoogleSearchQueryPreservesAlreadyFormatted() {
         val q1 = "meaning of this: \"apple\""
         assertEquals(q1, formatGoogleSearchQuery(q1))
-        val q2 = "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"hello world\""
+        val q2 = "meaning of this phrase by phrase: \"some phrase here\""
         assertEquals(q2, formatGoogleSearchQuery(q2))
-        val q3 = "meaning of this part by part: \"legacy format\""
+        val q3 = "Explain the literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"hello world\""
         assertEquals(q3, formatGoogleSearchQuery(q3))
+        val q4 = "Explain the philosophical and literary meaning of this excerpt in plain English, breaking it down phrase by phrase: \"hello world\""
+        assertEquals(q4, formatGoogleSearchQuery(q4))
+        val q5 = "meaning of this part by part: \"legacy format\""
+        assertEquals(q5, formatGoogleSearchQuery(q5))
     }
 
     @Test
@@ -608,5 +646,110 @@ class SelectionAndSearchTest {
 
         assertNull(previousSplitModeForGoogle)
         assertEquals(SplitMode.ONLY_BOOK, splitMode)
+    }
+
+    @Test
+    fun testSidecarAllWordsNames() {
+        assertEquals(".Republic_all_words.pdf", Sidecar.expectedAllWordsName("Republic.pdf"))
+        assertEquals(".Republic_all_words.pdf", Sidecar.expectedAllWordsName(".Republic.pdf"))
+        assertEquals(".Odyssey_all_words.pdf", Sidecar.expectedAllWordsName("Odyssey.epub"))
+        assertEquals(".Odyssey_all_words.pdf", Sidecar.expectedAllWordsName(".Odyssey.epub"))
+
+        assertEquals("Republic_all_words.pdf", Sidecar.legacyAllWordsName("Republic.pdf"))
+        assertEquals("Odyssey_all_words.pdf", Sidecar.legacyAllWordsName("Odyssey.epub"))
+    }
+
+    @Test
+    fun testExtractUniqueSortedWords() {
+        val sampleText = """
+            The quick brown fox jumps over the lazy dog!
+            A fox is quick, and the dog was brown.
+            Zebra and Apple were watching.
+        """.trimIndent()
+
+        val uniqueWords = VocabGenerator.extractUniqueSortedWords(sampleText)
+
+        // Verifications:
+        // 1. All lowercase
+        // 2. Sorted alphabetically
+        // 3. Deduplicated
+        // 4. Single-letter words ('a') ignored
+        assertEquals(
+            listOf("and", "apple", "brown", "dog", "fox", "is", "jumps", "lazy", "over", "quick", "the", "was", "watching", "were", "zebra"),
+            uniqueWords
+        )
+    }
+
+    @Test
+    fun testGetWordsWithDefinitionsSorted() {
+        val testDict = mapOf(
+            "apple" to """{"pos":[{"type":"noun","def":"A sweet round fruit","eg":["Eat an apple"],"syn":["pome"],"ant":[]}],"score":10.0}""",
+            "banana" to """{"pos":[{"type":"noun","def":"An elongated yellow fruit","eg":["Yellow banana"],"syn":[],"ant":[]}],"score":12.0}""",
+            "zebra" to """{"pos":[{"type":"noun","def":"An African wild horse with black-and-white stripes","eg":["Spotted a zebra"],"syn":[],"ant":[]}],"score":40.0}"""
+        )
+        VocabGenerator.initForTest(testDict)
+
+        val words = listOf("apple", "banana", "nonexistentwordxyz", "zebra")
+        val definedWords = VocabGenerator.getWordsWithDefinitions(words)
+
+        assertEquals(3, definedWords.size)
+        assertEquals("apple", definedWords[0].first)
+        assertEquals("banana", definedWords[1].first)
+        assertEquals("zebra", definedWords[2].first)
+
+        assertEquals("A sweet round fruit", definedWords[0].second.pos[0].def)
+        assertEquals(listOf("pome"), definedWords[0].second.pos[0].syn)
+
+        // Test with score threshold = 20f (apple=10.0 and banana=12.0 match; zebra=40.0 filtered out)
+        val filteredWords = VocabGenerator.getWordsWithDefinitions(words, maxScoreThreshold = 20f)
+        assertEquals(2, filteredWords.size)
+        assertEquals("apple", filteredWords[0].first)
+        assertEquals("banana", filteredWords[1].first)
+
+        // Test with score threshold = 11f (only apple=10.0 matches)
+        val rareOnlyWords = VocabGenerator.getWordsWithDefinitions(words, maxScoreThreshold = 11f)
+        assertEquals(1, rareOnlyWords.size)
+        assertEquals("apple", rareOnlyWords[0].first)
+    }
+
+    @Test
+    fun testWordInclusionOptions() {
+        val testDict = mapOf(
+            "apple" to """{"pos":[{"type":"noun","def":"A sweet round fruit","eg":["Eat an apple"],"syn":["pome"],"ant":[]}],"score":10.0}""",
+            "banana" to """{"pos":[{"type":"noun","def":"An elongated yellow fruit","eg":["Yellow banana"],"syn":[],"ant":[]}],"score":12.0}""",
+            "brave" to """{"pos":[{"type":"adjective","def":"Ready to face danger","eg":[],"syn":["courageous"],"ant":["cowardly"]}],"score":15.0}"""
+        )
+        VocabGenerator.initForTest(testDict)
+
+        val words = listOf("apple", "banana", "brave")
+
+        // 1. By default: definitions=true, synonyms=true, antonyms=true -> all three included
+        val allIncluded = VocabGenerator.getWordsWithDefinitions(words, maxScoreThreshold = 100f)
+        assertEquals(3, allIncluded.size)
+
+        // 2. Synonyms and antonyms only: definitions=false, synonyms=true, antonyms=true
+        // banana has no syn and no ant, so it should be excluded!
+        val synAntOnly = VocabGenerator.getWordsWithDefinitions(
+            words, maxScoreThreshold = 100f,
+            includeDefinitions = false, includeSynonyms = true, includeAntonyms = true
+        )
+        assertEquals(2, synAntOnly.size)
+        assertEquals("apple", synAntOnly[0].first)
+        assertEquals("brave", synAntOnly[1].first)
+
+        // 3. Only antonyms: only brave has ant
+        val antOnly = VocabGenerator.getWordsWithDefinitions(
+            words, maxScoreThreshold = 100f,
+            includeDefinitions = false, includeSynonyms = false, includeAntonyms = true
+        )
+        assertEquals(1, antOnly.size)
+        assertEquals("brave", antOnly[0].first)
+
+        // 4. Only definitions: all three have definitions
+        val defsOnly = VocabGenerator.getWordsWithDefinitions(
+            words, maxScoreThreshold = 100f,
+            includeDefinitions = true, includeSynonyms = false, includeAntonyms = false
+        )
+        assertEquals(3, defsOnly.size)
     }
 }
