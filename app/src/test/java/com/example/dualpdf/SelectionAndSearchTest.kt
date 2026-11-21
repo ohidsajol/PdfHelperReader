@@ -752,4 +752,73 @@ class SelectionAndSearchTest {
         )
         assertEquals(3, defsOnly.size)
     }
+
+    @Test
+    fun testSafeSharedPreferencesExtensions() {
+        val storage = mutableMapOf<String, Any?>()
+
+        val mockPrefs = object : android.content.SharedPreferences {
+            override fun getAll(): MutableMap<String, *> = storage
+            override fun getString(key: String?, defValue: String?): String? {
+                val v = storage[key] ?: return defValue
+                if (v is String) return v
+                throw ClassCastException("$v cannot be cast to String")
+            }
+            override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? = defValues
+            override fun getInt(key: String?, defValue: Int): Int {
+                val v = storage[key] ?: return defValue
+                if (v is Int) return v
+                throw ClassCastException("$v cannot be cast to Int")
+            }
+            override fun getLong(key: String?, defValue: Long): Long = defValue
+            override fun getFloat(key: String?, defValue: Float): Float {
+                val v = storage[key] ?: return defValue
+                if (v is Float) return v
+                throw ClassCastException("$v cannot be cast to Float")
+            }
+            override fun getBoolean(key: String?, defValue: Boolean): Boolean {
+                val v = storage[key] ?: return defValue
+                if (v is Boolean) return v
+                throw ClassCastException("$v cannot be cast to Boolean")
+            }
+            override fun contains(key: String?): Boolean = storage.containsKey(key)
+            override fun edit(): android.content.SharedPreferences.Editor = throw UnsupportedOperationException()
+            override fun registerOnSharedPreferenceChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) {}
+            override fun unregisterOnSharedPreferenceChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) {}
+        }
+
+        // 1. Normal booleans
+        storage["bool_true"] = true
+        storage["bool_false"] = false
+        assertEquals(true, mockPrefs.getSafeBoolean("bool_true", false))
+        assertEquals(false, mockPrefs.getSafeBoolean("bool_false", true))
+
+        // 2. Mismatched strings for boolean (reproducing the crash where String cannot be cast to Boolean)
+        storage["vocab_include_definitions"] = "true"
+        storage["vocab_include_synonyms"] = "false"
+        storage["invalid_str"] = "not_a_bool"
+        assertEquals(true, mockPrefs.getSafeBoolean("vocab_include_definitions", false))
+        assertEquals(false, mockPrefs.getSafeBoolean("vocab_include_synonyms", true))
+        assertEquals(true, mockPrefs.getSafeBoolean("invalid_str", true))
+
+        // 3. Missing keys return default
+        assertEquals(true, mockPrefs.getSafeBoolean("nonexistent", true))
+        assertEquals(false, mockPrefs.getSafeBoolean("nonexistent", false))
+
+        // 4. Mismatched types for float
+        storage["float_val"] = 42.5f
+        storage["float_as_str"] = "37.0"
+        storage["float_as_int"] = 25
+        assertEquals(42.5f, mockPrefs.getSafeFloat("float_val", 0f), 0.01f)
+        assertEquals(37.0f, mockPrefs.getSafeFloat("float_as_str", 0f), 0.01f)
+        assertEquals(25.0f, mockPrefs.getSafeFloat("float_as_int", 0f), 0.01f)
+        assertEquals(10f, mockPrefs.getSafeFloat("missing_float", 10f), 0.01f)
+
+        // 5. Mismatched types for int
+        storage["int_val"] = 100
+        storage["int_as_str"] = "200"
+        assertEquals(100, mockPrefs.getSafeInt("int_val", 0))
+        assertEquals(200, mockPrefs.getSafeInt("int_as_str", 0))
+        assertEquals(5, mockPrefs.getSafeInt("missing_int", 5))
+    }
 }

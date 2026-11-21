@@ -3,6 +3,7 @@ package com.example.dualpdf
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Color as AColor
 import android.graphics.pdf.PdfRenderer
@@ -410,6 +411,49 @@ class PdfDoc private constructor(
             }
             return doc
         }
+    }
+}
+
+/* =========================================================================
+ *  Resilient SharedPreferences Extension Helpers
+ * ========================================================================= */
+fun SharedPreferences.getSafeBoolean(key: String, default: Boolean): Boolean {
+    return runCatching { getBoolean(key, default) }.getOrElse {
+        runCatching {
+            val raw = all[key]
+            when (raw) {
+                is Boolean -> raw
+                is String -> raw.toBooleanStrictOrNull() ?: (raw.toIntOrNull()?.let { it != 0 }) ?: default
+                is Number -> raw.toInt() != 0
+                else -> default
+            }
+        }.getOrNull() ?: default
+    }
+}
+
+fun SharedPreferences.getSafeFloat(key: String, default: Float): Float {
+    return runCatching { getFloat(key, default) }.getOrElse {
+        runCatching {
+            val raw = all[key]
+            when (raw) {
+                is Number -> raw.toFloat()
+                is String -> raw.toFloatOrNull() ?: default
+                else -> default
+            }
+        }.getOrNull() ?: default
+    }
+}
+
+fun SharedPreferences.getSafeInt(key: String, default: Int): Int {
+    return runCatching { getInt(key, default) }.getOrElse {
+        runCatching {
+            val raw = all[key]
+            when (raw) {
+                is Number -> raw.toInt()
+                is String -> raw.toIntOrNull() ?: raw.toDoubleOrNull()?.toInt() ?: default
+                else -> default
+            }
+        }.getOrNull() ?: default
     }
 }
 
@@ -879,22 +923,11 @@ class Reader(private val ctx: Context, private val scope: CoroutineScope) {
     }
 
     private fun getBoolPref(key: String, default: Boolean): Boolean {
-        return runCatching { prefs.getBoolean(key, default) }.getOrElse {
-            runCatching { prefs.getString(key, null)?.toBoolean() }.getOrNull() ?: default
-        }
+        return prefs.getSafeBoolean(key, default)
     }
 
     private fun getIntPref(key: String, default: Int): Int {
-        return runCatching { prefs.getInt(key, default) }.getOrElse {
-            runCatching {
-                val raw = prefs.all[key]
-                when (raw) {
-                    is Number -> raw.toInt()
-                    is String -> raw.toIntOrNull() ?: raw.toDoubleOrNull()?.toInt() ?: default
-                    else -> default
-                }
-            }.getOrNull() ?: default
-        }
+        return prefs.getSafeInt(key, default)
     }
 
     private fun syncFromDisk() {
@@ -3604,19 +3637,10 @@ fun ReaderScreen(reader: Reader) {
                     ?: File(vocabDir, legacyAllWordsName).takeIf { it.exists() && it.length() > 0 }
 
                 val prefs = remember { ctx.getSharedPreferences("dual_pdf_reader", Context.MODE_PRIVATE) }
-                val savedThreshold = try {
-                    prefs.getFloat("last_vocab_threshold", 37f)
-                } catch (_: Exception) {
-                    try {
-                        prefs.getString("last_vocab_threshold", null)?.toFloatOrNull() ?: 37f
-                    } catch (_: Exception) {
-                        37f
-                    }
-                }
-
-                val savedDefs = prefs.getBoolean("vocab_include_definitions", true)
-                val savedSyns = prefs.getBoolean("vocab_include_synonyms", true)
-                val savedAnts = prefs.getBoolean("vocab_include_antonyms", true)
+                val savedThreshold = prefs.getSafeFloat("last_vocab_threshold", 37f)
+                val savedDefs = prefs.getSafeBoolean("vocab_include_definitions", true)
+                val savedSyns = prefs.getSafeBoolean("vocab_include_synonyms", true)
+                val savedAnts = prefs.getSafeBoolean("vocab_include_antonyms", true)
 
                 VocabThresholdDialog(
                     initialThreshold = savedThreshold,
@@ -3632,9 +3656,9 @@ fun ReaderScreen(reader: Reader) {
                         showVocabThresholdDialog = false
                         prefs.edit()
                             .remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold)
-                            .putBoolean("vocab_include_definitions", defs)
-                            .putBoolean("vocab_include_synonyms", syns)
-                            .putBoolean("vocab_include_antonyms", ants)
+                            .remove("vocab_include_definitions").putBoolean("vocab_include_definitions", defs)
+                            .remove("vocab_include_synonyms").putBoolean("vocab_include_synonyms", syns)
+                            .remove("vocab_include_antonyms").putBoolean("vocab_include_antonyms", ants)
                             .apply()
                         executeGenerateVocab(selectedThreshold, defs, syns, ants)
                     },
@@ -3642,9 +3666,9 @@ fun ReaderScreen(reader: Reader) {
                         showVocabThresholdDialog = false
                         prefs.edit()
                             .remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold)
-                            .putBoolean("vocab_include_definitions", defs)
-                            .putBoolean("vocab_include_synonyms", syns)
-                            .putBoolean("vocab_include_antonyms", ants)
+                            .remove("vocab_include_definitions").putBoolean("vocab_include_definitions", defs)
+                            .remove("vocab_include_synonyms").putBoolean("vocab_include_synonyms", syns)
+                            .remove("vocab_include_antonyms").putBoolean("vocab_include_antonyms", ants)
                             .apply()
                         executeGenerateAllWordsForCurrentBook(selectedThreshold, defs, syns, ants)
                     },
@@ -3673,14 +3697,10 @@ fun ReaderScreen(reader: Reader) {
                     ?: File(vocabDir, legacyName).takeIf { it.exists() && it.length() > 0 }
 
                 val prefs = remember { ctx.getSharedPreferences("dual_pdf_reader", Context.MODE_PRIVATE) }
-                val savedThreshold = try {
-                    prefs.getFloat("last_vocab_threshold", 37f)
-                } catch (_: Exception) {
-                    37f
-                }
-                val savedDefs = prefs.getBoolean("vocab_include_definitions", true)
-                val savedSyns = prefs.getBoolean("vocab_include_synonyms", true)
-                val savedAnts = prefs.getBoolean("vocab_include_antonyms", true)
+                val savedThreshold = prefs.getSafeFloat("last_vocab_threshold", 37f)
+                val savedDefs = prefs.getSafeBoolean("vocab_include_definitions", true)
+                val savedSyns = prefs.getSafeBoolean("vocab_include_synonyms", true)
+                val savedAnts = prefs.getSafeBoolean("vocab_include_antonyms", true)
 
                 VocabThresholdDialog(
                     initialThreshold = savedThreshold,
@@ -3696,9 +3716,9 @@ fun ReaderScreen(reader: Reader) {
                         showHistory = false
                         prefs.edit()
                             .remove("last_vocab_threshold").putFloat("last_vocab_threshold", selectedThreshold)
-                            .putBoolean("vocab_include_definitions", defs)
-                            .putBoolean("vocab_include_synonyms", syns)
-                            .putBoolean("vocab_include_antonyms", ants)
+                            .remove("vocab_include_definitions").putBoolean("vocab_include_definitions", defs)
+                            .remove("vocab_include_synonyms").putBoolean("vocab_include_synonyms", syns)
+                            .remove("vocab_include_antonyms").putBoolean("vocab_include_antonyms", ants)
                             .apply()
                         executeGenerateAllWordsForHistory(h, selectedThreshold, defs, syns, ants)
                     },
