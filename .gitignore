@@ -5,3 +5,8 @@ local.properties
 build/
 app/build/
 .DS_Store
+
+# Built packages & APKs
+*.apk
+*.aab
+

@@ -197,8 +197,9 @@
 ---
 
 ## 📦 Download & Installation
-Pre-built signed release APKs are available on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
-* **[PdfHelperReader-v4.4.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.4.0/PdfHelperReader-v4.4.0.apk)**
+Pre-built signed release APKs are available exclusively on the [GitHub Releases](https://github.com/ohidsajol/PdfHelperReader/releases) page:
+* **[Latest Release (v4.5.0)](https://github.com/ohidsajol/PdfHelperReader/releases/latest)**
+* **[PdfHelperReader-v4.5.0.apk](https://github.com/ohidsajol/PdfHelperReader/releases/download/v4.5.0/PdfHelperReader-v4.5.0.apk)**
 
 To build from source:
 ```bash
